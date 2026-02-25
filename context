@@ -1,6 +1,6 @@
 # CourseNotif Context (Current Snapshot)
 
-Last updated: February 20, 2026
+Last updated: February 25, 2026
 
 ## 1) Project identity
 
@@ -78,12 +78,13 @@ Last updated: February 20, 2026
 
 7. Notifications
 - Notification module exists in `src/notification.js`
-- Delivery is still stubbed to console events (no real provider yet)
+- SMTP delivery is implemented via `nodemailer`
+- Gmail SMTP app-password flow is supported via environment variables
 
 ## 3) What is not done yet
 
-1. Real notification delivery
-- No production email provider integration yet
+1. Notification delivery hardening
+- SMTP provider integration is in place
 - No persisted delivery history/retry pipeline yet
 
 2. Security and auth
@@ -130,7 +131,7 @@ Last updated: February 20, 2026
 
 ## 5) Immediate priorities
 
-1. Replace email stubs with real provider integration and delivery logging
+1. Add delivery logging, retries, and idempotency for sent notifications
 2. Add parser + monitor + API automated tests
 3. Introduce authentication and identity-bound ownership checks
 4. Add structured logs/metrics and operational alerts/runbooks
