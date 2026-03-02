@@ -11,10 +11,29 @@ function sleep(ms) {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
+function waitForTerminationSignal() {
+  return new Promise((resolve) => {
+    let settled = false;
+    const onSignal = (signal) => {
+      if (settled) {
+        return;
+      }
+      settled = true;
+      process.off("SIGINT", onSignal);
+      process.off("SIGTERM", onSignal);
+      console.log(`[worker] Received ${signal}; shutting down.`);
+      resolve();
+    };
+    process.on("SIGINT", onSignal);
+    process.on("SIGTERM", onSignal);
+  });
+}
+
 function parseCliArgs(argv) {
   const args = {
     once: false,
     initLogin: false,
+    keepOpen: false,
     checkNewCourse: null
   };
 
@@ -23,6 +42,9 @@ function parseCliArgs(argv) {
   }
   if (argv.includes("--init-login")) {
     args.initLogin = true;
+  }
+  if (argv.includes("--keep-open")) {
+    args.keepOpen = true;
   }
 
   const idx = argv.indexOf("--check-new-course");
@@ -42,6 +64,10 @@ function parseCliArgs(argv) {
     };
   }
 
+  if (args.keepOpen && !args.initLogin) {
+    throw new Error("--keep-open can only be used with --init-login.");
+  }
+
   return args;
 }
 
@@ -56,6 +82,10 @@ async function run() {
     if (args.initLogin) {
       const result = await vsbSource.initLoginSession();
       console.log(`[worker] init-login result=${JSON.stringify(result)}`);
+      if (args.keepOpen) {
+        console.log("[worker] Keeping browser window open. Press Ctrl+C to close.");
+        await waitForTerminationSignal();
+      }
       return;
     }
 

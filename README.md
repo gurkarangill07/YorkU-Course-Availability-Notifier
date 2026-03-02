@@ -11,6 +11,7 @@ CourseNotif monitors tracked courses and notifies users when seats open (`os > 0
   - optional per-user custom course display name
 - Monitoring worker (`src/worker.js`) with modes:
   - `--init-login`
+  - `--init-login --keep-open`
   - `--once`
   - loop mode (default)
   - `--check-new-course <userId> <cartId>`
@@ -145,6 +146,12 @@ export JSP_SOURCE_DIR="/absolute/path/to/jsp/files"
 psql "$DATABASE_URL" -f db/schema.sql
 ```
 
+If `psql` is not on PATH (common on macOS/Homebrew), use:
+
+```bash
+/opt/homebrew/opt/postgresql@16/bin/psql "$DATABASE_URL" -f db/schema.sql
+```
+
 ## Run
 
 Start API + UI:
@@ -159,6 +166,14 @@ Initialize shared browser session (browser mode):
 
 ```bash
 npm run monitor:init-login
+```
+
+Note: `monitor:init-login` exits after session setup and closes the Playwright browser context.
+
+Keep browser open after login (manual verification/debug):
+
+```bash
+npm run monitor:init-login:keep-open
 ```
 
 Single monitor pass:
@@ -192,6 +207,7 @@ Use wrapper scripts if you keep env vars in `.env.local`:
 ```bash
 npm run web:local
 npm run monitor:init-login:local
+npm run monitor:init-login:keep-open:local
 npm run monitor:once:local
 npm run monitor:loop:local
 ```
