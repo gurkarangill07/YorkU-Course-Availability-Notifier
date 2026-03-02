@@ -6,7 +6,7 @@ CourseNotif monitors tracked courses and notifies users when seats open (`os > 0
 
 - PostgreSQL-backed persistence (`users`, `courses`, `user_courses`, shared JSP cache, shared session state).
 - Express API + single-page web UI (`index.html`) for:
-  - resolving user by email
+  - passwordless sign-in via email OTP
   - adding/listing/removing tracked courses
   - optional per-user custom course display name
 - Monitoring worker (`src/worker.js`) with modes:
@@ -79,7 +79,19 @@ export SMTP_PORT="465"
 export SMTP_SECURE="true"
 export SMTP_USER="yourgmail@gmail.com"
 export SMTP_PASS="your_gmail_app_password"
+export SMTP_PASS_AUTH="your_auth_gmail_app_password"
 export SMTP_FROM="CourseNotif <yourgmail@gmail.com>"
+```
+
+Passwordless auth settings:
+
+```bash
+export AUTH_OTP_TTL_MINUTES="10"
+export AUTH_OTP_RESEND_COOLDOWN_SECONDS="60"
+export AUTH_OTP_MAX_FAILED_ATTEMPTS="5"
+export AUTH_SESSION_DAYS="30"
+export AUTH_COOKIE_SECURE="false"
+export OTP_PEPPER="change_this_random_secret"
 ```
 
 Gmail requirement:
@@ -238,13 +250,16 @@ bash scripts/uninstall-monitor-launchd.sh
 ## API endpoints
 
 - `GET /api/health`
-- `POST /api/users/resolve`
-- `GET /api/tracked-courses?email=...`
-- `POST /api/tracked-courses`
-- `DELETE /api/tracked-courses/:id?email=...`
+- `GET /api/auth/me`
+- `POST /api/auth/send-otp`
+- `POST /api/auth/verify-otp`
+- `POST /api/auth/logout`
+- `GET /api/tracked-courses` (auth required)
+- `POST /api/tracked-courses` (auth required)
+- `DELETE /api/tracked-courses/:id` (auth required)
 
 ## Current limitations
 
 - No delivery history/retry queue persisted in DB yet.
-- No full authentication/authorization system yet (email-based ownership checks).
+- OTP auth is implemented, but no external identity provider and no distributed/session revocation dashboard.
 - No dedicated unit/integration test suite yet.

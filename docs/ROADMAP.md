@@ -22,6 +22,7 @@ Planning note: keep this file aligned with `README.md` and `context` after major
   - supervisor loop (`scripts/start-monitor-supervisor.sh`, `scripts/stop-monitor-supervisor.sh`)
   - macOS launchd install/uninstall helpers
 - Notification functions send SMTP email via `nodemailer` (Gmail-compatible).
+- Passwordless email OTP auth + session cookie flow exists for API access control.
 
 ## Phase 1: Notification delivery reliability
 
@@ -42,9 +43,9 @@ Exit criteria:
 
 Goal: prevent unauthorized read/write of tracking data.
 
-- Add account authentication (session or token).
-- Bind tracked-course operations to authenticated identity.
-- Remove dependency on email query/body ownership checks.
+- Keep passwordless auth/session flow and harden it for production.
+- Enforce stronger abuse controls (IP/device limits, lockouts, throttling).
+- Add session management and revocation UX.
 - Add route-level rate limiting and stricter input validation.
 - Add deployment checklist for secret management.
 

@@ -1,3 +1,4 @@
+const crypto = require("crypto");
 const nodemailer = require("nodemailer");
 
 function parseBoolean(value, fallback) {
@@ -14,17 +15,17 @@ function parseBoolean(value, fallback) {
   return fallback;
 }
 
-function getSmtpConfig() {
+function getSmtpConfig({ passEnvName = "SMTP_PASS" } = {}) {
   const host = process.env.SMTP_HOST || "smtp.gmail.com";
   const port = Number.parseInt(process.env.SMTP_PORT || "465", 10);
   const secure = parseBoolean(process.env.SMTP_SECURE, true);
   const user = String(process.env.SMTP_USER || "").trim();
-  const pass = String(process.env.SMTP_PASS || "").trim();
+  const pass = String(process.env[passEnvName] || process.env.SMTP_PASS || "").trim();
   const from = String(process.env.SMTP_FROM || user || "").trim();
 
   if (!user || !pass) {
     throw new Error(
-      "SMTP_USER and SMTP_PASS are required to send emails. Configure Gmail SMTP app-password credentials."
+      "SMTP_USER and SMTP_PASS (or pass override env var) are required to send emails. Configure Gmail SMTP app-password credentials."
     );
   }
 
@@ -42,19 +43,30 @@ function getSmtpConfig() {
   };
 }
 
-let cachedTransporter = null;
-let cachedTransportKey = null;
+const transporterCache = new Map();
 
 function createTransportKey(config) {
-  return [config.host, config.port, config.secure, config.user].join("|");
+  const passFingerprint = crypto
+    .createHash("sha256")
+    .update(config.pass)
+    .digest("hex");
+  return [
+    config.host,
+    config.port,
+    config.secure,
+    config.user,
+    config.from,
+    passFingerprint
+  ].join("|");
 }
 
-function getTransporter() {
-  const config = getSmtpConfig();
+function getTransporter({ passEnvName = "SMTP_PASS" } = {}) {
+  const config = getSmtpConfig({ passEnvName });
   const transportKey = createTransportKey(config);
+  let transporter = transporterCache.get(transportKey);
 
-  if (!cachedTransporter || cachedTransportKey !== transportKey) {
-    cachedTransporter = nodemailer.createTransport({
+  if (!transporter) {
+    transporter = nodemailer.createTransport({
       host: config.host,
       port: config.port,
       secure: config.secure,
@@ -63,20 +75,20 @@ function getTransporter() {
         pass: config.pass
       }
     });
-    cachedTransportKey = transportKey;
+    transporterCache.set(transportKey, transporter);
   }
 
   return {
     config,
-    transporter: cachedTransporter
+    transporter
   };
 }
 
-async function sendMail({ toEmail, subject, text, html }) {
+async function sendMail({ toEmail, subject, text, html, passEnvName = "SMTP_PASS" }) {
   if (!toEmail) {
     throw new Error("Recipient email is required.");
   }
-  const { config, transporter } = getTransporter();
+  const { config, transporter } = getTransporter({ passEnvName });
   const info = await transporter.sendMail({
     from: config.from,
     to: toEmail,
@@ -137,7 +149,44 @@ async function sendSessionExpiredEmail({ toEmail, reason }) {
   });
 }
 
+async function sendLoginOtpEmail({ toEmail, otpCode, expiresMinutes = 10 }) {
+  const code = String(otpCode || "").trim();
+  if (!/^\d{6}$/.test(code)) {
+    throw new Error("A 6-digit OTP code is required.");
+  }
+
+  const ttl = Number.isFinite(Number(expiresMinutes))
+    ? Math.max(1, Number(expiresMinutes))
+    : 10;
+
+  const subject = "Your CourseNotif login code";
+  const text = [
+    "Use this one-time code to sign in to CourseNotif:",
+    "",
+    code,
+    "",
+    `This code expires in ${ttl} minute(s).`,
+    "If you did not request this code, you can ignore this email."
+  ].join("\n");
+
+  const html = [
+    "<p>Use this one-time code to sign in to <strong>CourseNotif</strong>:</p>",
+    `<p style="font-size: 24px; font-weight: 700; letter-spacing: 2px;"><code>${code}</code></p>`,
+    `<p>This code expires in <strong>${ttl} minute(s)</strong>.</p>`,
+    "<p>If you did not request this code, you can ignore this email.</p>"
+  ].join("");
+
+  await sendMail({
+    toEmail,
+    subject,
+    text,
+    html,
+    passEnvName: "SMTP_PASS_AUTH"
+  });
+}
+
 module.exports = {
   sendCourseOpenEmail,
-  sendSessionExpiredEmail
+  sendSessionExpiredEmail,
+  sendLoginOtpEmail
 };
