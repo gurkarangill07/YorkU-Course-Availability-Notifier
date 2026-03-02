@@ -21,21 +21,26 @@ Last updated: March 2, 2026
 - Express server in `src/apiServer.js`
 - Implemented endpoints:
   - `GET /api/health`
-  - `POST /api/users/resolve`
-  - `GET /api/tracked-courses?email=...`
-  - `POST /api/tracked-courses`
-  - `DELETE /api/tracked-courses/:id?email=...`
+  - `GET /api/auth/me`
+  - `POST /api/auth/send-otp`
+  - `POST /api/auth/verify-otp`
+  - `POST /api/auth/logout`
+  - `GET /api/tracked-courses` (auth required)
+  - `POST /api/tracked-courses` (auth required)
+  - `DELETE /api/tracked-courses/:id` (auth required)
 - Serves `index.html` at `GET /`
 
 3. Frontend
 - Single-page UI in `index.html`
 - Supports:
-  - setting notification email
+  - passwordless email OTP sign-in
+  - resend OTP with cooldown
+  - logout
   - adding tracked course by cart ID
   - optional custom course name
   - listing tracked courses from API
   - stop tracking action
-- Email is persisted client-side in localStorage (`coursenotif_email`)
+- Tracked-course actions are enabled only when authenticated
 
 4. Monitoring worker
 - Worker CLI in `src/worker.js`
@@ -82,6 +87,7 @@ Last updated: March 2, 2026
 - Notification module exists in `src/notification.js`
 - SMTP delivery is implemented via `nodemailer`
 - Gmail SMTP app-password flow is supported via environment variables
+- Separate SMTP password override is supported for auth OTP emails (`SMTP_PASS_AUTH`)
 
 ## 3) What is not done yet
 
@@ -90,8 +96,9 @@ Last updated: March 2, 2026
 - No persisted delivery history/retry pipeline yet
 
 2. Security and auth
-- No account auth/session model yet
-- Ownership model is still lightweight and email-based
+- Passwordless OTP auth/session model is implemented
+- Ownership for tracked-course CRUD is session-bound (not email query/body based)
+- Remaining work: stronger abuse controls (IP/device rate limiting), session management UX, and deeper auditability
 
 3. Automated testing and CI quality gates
 - No dedicated unit/integration test suite yet

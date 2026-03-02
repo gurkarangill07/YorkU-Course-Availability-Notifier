@@ -5,6 +5,7 @@
 -- 3) each course (cart_id) -> os + course_name
 -- 4) one shared latest JSP/XHR file for all users
 -- 5) one shared VSB login/session for all users
+-- 6) email OTP auth sessions for API access control
 
 BEGIN;
 
@@ -14,6 +15,28 @@ CREATE TABLE IF NOT EXISTS users (
   created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
   updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
   CONSTRAINT users_email_has_at CHECK (POSITION('@' IN email) > 1)
+);
+
+-- Passwordless authentication OTP challenges (email-based one-time codes).
+CREATE TABLE IF NOT EXISTS auth_otp_challenges (
+  id BIGSERIAL PRIMARY KEY,
+  email TEXT NOT NULL,
+  otp_hash TEXT NOT NULL,
+  expires_at TIMESTAMPTZ NOT NULL,
+  failed_attempts INTEGER NOT NULL DEFAULT 0 CHECK (failed_attempts >= 0),
+  consumed_at TIMESTAMPTZ,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  CONSTRAINT auth_otp_challenges_email_has_at CHECK (POSITION('@' IN email) > 1)
+);
+
+-- Browser/API auth sessions bound to users.
+CREATE TABLE IF NOT EXISTS auth_sessions (
+  id BIGSERIAL PRIMARY KEY,
+  user_id BIGINT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  token_hash TEXT NOT NULL UNIQUE,
+  expires_at TIMESTAMPTZ NOT NULL,
+  revoked_at TIMESTAMPTZ,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 
 CREATE TABLE IF NOT EXISTS courses (
@@ -82,5 +105,9 @@ ALTER TABLE user_courses
 CREATE INDEX IF NOT EXISTS idx_user_courses_user_id ON user_courses(user_id);
 CREATE INDEX IF NOT EXISTS idx_user_courses_cart_id ON user_courses(cart_id);
 CREATE INDEX IF NOT EXISTS idx_shared_vsb_session_state ON shared_vsb_session(session_state);
+CREATE INDEX IF NOT EXISTS idx_auth_otp_challenges_email_created_at
+  ON auth_otp_challenges(email, created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_auth_sessions_user_id ON auth_sessions(user_id);
+CREATE INDEX IF NOT EXISTS idx_auth_sessions_token_hash ON auth_sessions(token_hash);
 
 COMMIT;

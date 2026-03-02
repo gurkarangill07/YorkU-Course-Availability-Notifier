@@ -16,6 +16,35 @@ function createDb({ databaseUrl }) {
       ADD COLUMN IF NOT EXISTS display_name TEXT
       `
     );
+
+    await pool.query(
+      `
+      CREATE TABLE IF NOT EXISTS auth_otp_challenges (
+        id BIGSERIAL PRIMARY KEY,
+        email TEXT NOT NULL,
+        otp_hash TEXT NOT NULL,
+        expires_at TIMESTAMPTZ NOT NULL,
+        failed_attempts INTEGER NOT NULL DEFAULT 0 CHECK (failed_attempts >= 0),
+        consumed_at TIMESTAMPTZ,
+        created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+        CONSTRAINT auth_otp_challenges_email_has_at CHECK (POSITION('@' IN email) > 1)
+      );
+
+      CREATE TABLE IF NOT EXISTS auth_sessions (
+        id BIGSERIAL PRIMARY KEY,
+        user_id BIGINT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+        token_hash TEXT NOT NULL UNIQUE,
+        expires_at TIMESTAMPTZ NOT NULL,
+        revoked_at TIMESTAMPTZ,
+        created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+      );
+
+      CREATE INDEX IF NOT EXISTS idx_auth_otp_challenges_email_created_at
+        ON auth_otp_challenges(email, created_at DESC);
+      CREATE INDEX IF NOT EXISTS idx_auth_sessions_user_id ON auth_sessions(user_id);
+      CREATE INDEX IF NOT EXISTS idx_auth_sessions_token_hash ON auth_sessions(token_hash);
+      `
+    );
   }
 
   async function getSharedSession() {
@@ -155,6 +184,154 @@ function createDb({ databaseUrl }) {
       [email]
     );
     return rows[0];
+  }
+
+  async function cleanupExpiredAuthRecords() {
+    await pool.query(
+      `
+      DELETE FROM auth_otp_challenges
+      WHERE expires_at < NOW() - INTERVAL '1 day'
+      `
+    );
+    await pool.query(
+      `
+      DELETE FROM auth_sessions
+      WHERE (revoked_at IS NOT NULL OR expires_at < NOW())
+        AND created_at < NOW() - INTERVAL '7 days'
+      `
+    );
+  }
+
+  async function getLatestOtpChallengeByEmail(email) {
+    const { rows } = await pool.query(
+      `
+      SELECT
+        id,
+        email,
+        otp_hash,
+        expires_at,
+        failed_attempts,
+        consumed_at,
+        created_at
+      FROM auth_otp_challenges
+      WHERE email = $1
+      ORDER BY created_at DESC, id DESC
+      LIMIT 1
+      `,
+      [email]
+    );
+    return rows[0] || null;
+  }
+
+  async function invalidateActiveOtpChallengesByEmail(email) {
+    await pool.query(
+      `
+      UPDATE auth_otp_challenges
+      SET consumed_at = NOW()
+      WHERE email = $1 AND consumed_at IS NULL
+      `,
+      [email]
+    );
+  }
+
+  async function createOtpChallenge({ email, otpHash, expiresAt }) {
+    const { rows } = await pool.query(
+      `
+      INSERT INTO auth_otp_challenges (
+        email,
+        otp_hash,
+        expires_at,
+        failed_attempts,
+        consumed_at,
+        created_at
+      )
+      VALUES ($1, $2, $3, 0, NULL, NOW())
+      RETURNING
+        id,
+        email,
+        otp_hash,
+        expires_at,
+        failed_attempts,
+        consumed_at,
+        created_at
+      `,
+      [email, otpHash, expiresAt]
+    );
+    return rows[0];
+  }
+
+  async function markOtpChallengeConsumed(challengeId) {
+    await pool.query(
+      `
+      UPDATE auth_otp_challenges
+      SET consumed_at = NOW()
+      WHERE id = $1 AND consumed_at IS NULL
+      `,
+      [challengeId]
+    );
+  }
+
+  async function incrementOtpChallengeFailedAttempts(challengeId) {
+    const { rows } = await pool.query(
+      `
+      UPDATE auth_otp_challenges
+      SET failed_attempts = failed_attempts + 1
+      WHERE id = $1
+      RETURNING failed_attempts
+      `,
+      [challengeId]
+    );
+    return rows[0] ? rows[0].failed_attempts : null;
+  }
+
+  async function createAuthSession({ userId, tokenHash, expiresAt }) {
+    const { rows } = await pool.query(
+      `
+      INSERT INTO auth_sessions (
+        user_id,
+        token_hash,
+        expires_at,
+        revoked_at,
+        created_at
+      )
+      VALUES ($1, $2, $3, NULL, NOW())
+      RETURNING id, user_id, token_hash, expires_at, revoked_at, created_at
+      `,
+      [userId, tokenHash, expiresAt]
+    );
+    return rows[0];
+  }
+
+  async function getAuthSessionByTokenHash(tokenHash) {
+    const { rows } = await pool.query(
+      `
+      SELECT
+        s.id,
+        s.user_id,
+        s.token_hash,
+        s.expires_at,
+        s.revoked_at,
+        s.created_at,
+        u.email
+      FROM auth_sessions s
+      INNER JOIN users u ON u.id = s.user_id
+      WHERE s.token_hash = $1
+      LIMIT 1
+      `,
+      [tokenHash]
+    );
+    return rows[0] || null;
+  }
+
+  async function revokeAuthSessionByTokenHash(tokenHash) {
+    await pool.query(
+      `
+      UPDATE auth_sessions
+      SET revoked_at = NOW()
+      WHERE token_hash = $1 AND revoked_at IS NULL
+      `,
+      [tokenHash]
+    );
   }
 
   async function getTrackedCourseByUserAndCart(userId, cartId) {
@@ -396,9 +573,18 @@ function createDb({ databaseUrl }) {
   return {
     close,
     ensureCompatibility,
+    cleanupExpiredAuthRecords,
     getSharedSession,
     markSharedSessionExpired,
     markSharedSessionOk,
+    getLatestOtpChallengeByEmail,
+    invalidateActiveOtpChallengesByEmail,
+    createOtpChallenge,
+    markOtpChallengeConsumed,
+    incrementOtpChallengeFailedAttempts,
+    createAuthSession,
+    getAuthSessionByTokenHash,
+    revokeAuthSessionByTokenHash,
     getUserByEmail,
     getOrCreateUserByEmail,
     listTrackedCourses,
