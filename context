@@ -1,6 +1,6 @@
 # CourseNotif Context (Current Snapshot)
 
-Last updated: February 20, 2026
+Last updated: March 2, 2026
 
 ## 1) Project identity
 
@@ -41,6 +41,7 @@ Last updated: February 20, 2026
 - Worker CLI in `src/worker.js`
 - Modes:
   - `--init-login`
+  - `--init-login --keep-open` (keeps VSB window open until Ctrl+C)
   - `--once`
   - default loop mode
   - `--check-new-course <userId> <cartId>`
@@ -66,6 +67,7 @@ Last updated: February 20, 2026
 - Local npm runners:
   - `npm run web:local`
   - `npm run monitor:init-login:local`
+  - `npm run monitor:init-login:keep-open:local`
   - `npm run monitor:once:local`
   - `npm run monitor:loop:local`
 - Supervisor scripts:
@@ -78,12 +80,13 @@ Last updated: February 20, 2026
 
 7. Notifications
 - Notification module exists in `src/notification.js`
-- Delivery is still stubbed to console events (no real provider yet)
+- SMTP delivery is implemented via `nodemailer`
+- Gmail SMTP app-password flow is supported via environment variables
 
 ## 3) What is not done yet
 
-1. Real notification delivery
-- No production email provider integration yet
+1. Notification delivery hardening
+- SMTP provider integration is in place
 - No persisted delivery history/retry pipeline yet
 
 2. Security and auth
@@ -110,6 +113,8 @@ Last updated: February 20, 2026
 
 3. Apply schema
 - `psql "$DATABASE_URL" -f db/schema.sql`
+- If `psql` is not on PATH (macOS/Homebrew), use:
+  - `/opt/homebrew/opt/postgresql@16/bin/psql "$DATABASE_URL" -f db/schema.sql`
 
 4. Start API/UI
 - `npm run web` (or `npm run web:local`)
@@ -117,6 +122,8 @@ Last updated: February 20, 2026
 
 5. Initialize browser session (browser mode)
 - `npm run monitor:init-login` (or `npm run monitor:init-login:local`)
+- For manual verification/debug where browser must remain open:
+  - `npm run monitor:init-login:keep-open:local`
 
 6. Run monitor
 - Single pass: `npm run monitor:once`
@@ -130,7 +137,7 @@ Last updated: February 20, 2026
 
 ## 5) Immediate priorities
 
-1. Replace email stubs with real provider integration and delivery logging
+1. Add delivery logging, retries, and idempotency for sent notifications
 2. Add parser + monitor + API automated tests
 3. Introduce authentication and identity-bound ownership checks
 4. Add structured logs/metrics and operational alerts/runbooks

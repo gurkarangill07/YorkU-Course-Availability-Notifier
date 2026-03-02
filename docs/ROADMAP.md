@@ -1,6 +1,6 @@
 # CourseNotif Roadmap (Implementation-Aligned)
 
-Last updated: February 20, 2026
+Last updated: February 25, 2026
 
 Planning note: keep this file aligned with `README.md` and `context` after major implementation changes.
 
@@ -21,20 +21,20 @@ Planning note: keep this file aligned with `README.md` and `context` after major
 - Background worker ops scripts exist:
   - supervisor loop (`scripts/start-monitor-supervisor.sh`, `scripts/stop-monitor-supervisor.sh`)
   - macOS launchd install/uninstall helpers
-- Notification functions are present but currently stubbed (console events only).
+- Notification functions send SMTP email via `nodemailer` (Gmail-compatible).
 
-## Phase 1: Real notifications and delivery reliability
+## Phase 1: Notification delivery reliability
 
-Goal: move from stub alerts to reliable user-visible delivery.
+Goal: harden live SMTP delivery for reliability and traceability.
 
-- Integrate a real email provider (Resend/SendGrid/etc.).
+- Keep SMTP provider integration configurable (currently Gmail-compatible).
 - Persist delivery attempts and outcomes in DB.
 - Add retry/backoff for transient send failures.
 - Add idempotency guard for open-seat events.
 - Add dedupe/suppression window policy.
 
 Exit criteria:
-- End-to-end open-seat flow sends real emails.
+- End-to-end open-seat flow sends real emails in production.
 - Failed sends are retried and recorded with final status.
 - Duplicate notifications for one event are prevented.
 
@@ -102,7 +102,7 @@ Exit criteria:
 
 ## Immediate next actions (recommended order)
 
-1. Implement real email provider integration with delivery logging.
+1. Add delivery logging/retries/idempotency for SMTP notifications.
 2. Add parser + monitor + API automated tests.
 3. Introduce authentication and identity-bound ownership checks.
 4. Add structured logs/metrics and operational alerts/runbooks.

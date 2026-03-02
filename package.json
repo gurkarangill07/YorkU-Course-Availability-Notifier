@@ -2,13 +2,15 @@
   "name": "coursenotif-monitor",
   "version": "0.1.0",
   "private": true,
-  "description": "CourseNotif monitoring worker logic with database-backed state and email stubs",
+  "description": "CourseNotif monitoring worker logic with database-backed state and SMTP email notifications",
   "main": "src/worker.js",
   "scripts": {
     "web": "node src/apiServer.js",
     "web:local": "bash scripts/with-env.sh node src/apiServer.js",
     "monitor:init-login": "node src/worker.js --init-login",
     "monitor:init-login:local": "bash scripts/with-env.sh node src/worker.js --init-login",
+    "monitor:init-login:keep-open": "node src/worker.js --init-login --keep-open",
+    "monitor:init-login:keep-open:local": "bash scripts/with-env.sh node src/worker.js --init-login --keep-open",
     "monitor:once": "node src/worker.js --once",
     "monitor:once:local": "bash scripts/with-env.sh node src/worker.js --once",
     "monitor:loop": "node src/worker.js",
@@ -17,6 +19,7 @@
   },
   "dependencies": {
     "express": "^4.21.2",
+    "nodemailer": "^8.0.1",
     "pg": "^8.12.0",
     "playwright": "^1.51.1"
   }

@@ -11,6 +11,7 @@ CourseNotif monitors tracked courses and notifies users when seats open (`os > 0
   - optional per-user custom course display name
 - Monitoring worker (`src/worker.js`) with modes:
   - `--init-login`
+  - `--init-login --keep-open`
   - `--once`
   - loop mode (default)
   - `--check-new-course <userId> <cartId>`
@@ -20,9 +21,9 @@ CourseNotif monitors tracked courses and notifies users when seats open (`os > 0
   - `db` (reuse latest cached JSP from DB)
 - Session resilience in browser mode:
   - auto re-login support
-  - shared session expiry tracking and owner alert stub
+  - shared session expiry tracking and owner alert emails
   - browser context auto-recovery when Playwright context/page is closed unexpectedly
-- Notifications are currently stubbed to console output (`src/notification.js`).
+- Notifications are sent using SMTP via `nodemailer` (`src/notification.js`).
 
 ## Key files
 
@@ -48,6 +49,12 @@ npx playwright install chromium
 
 2. Configure environment variables
 
+You can start from the template:
+
+```bash
+cp .env.example .env.local
+```
+
 Minimum required:
 
 ```bash
@@ -63,6 +70,22 @@ export SESSION_DURATION_MINUTES="90"
 export VSB_REFRESH_INTERVAL_MINUTES="15"
 export OWNER_ALERT_EMAIL="you@example.com"   # optional owner alert target
 ```
+
+SMTP notification settings (Gmail example):
+
+```bash
+export SMTP_HOST="smtp.gmail.com"
+export SMTP_PORT="465"
+export SMTP_SECURE="true"
+export SMTP_USER="yourgmail@gmail.com"
+export SMTP_PASS="your_gmail_app_password"
+export SMTP_FROM="CourseNotif <yourgmail@gmail.com>"
+```
+
+Gmail requirement:
+
+- Enable 2-Step Verification on the Gmail account.
+- Generate an App Password and set it as `SMTP_PASS`.
 
 Source mode:
 
@@ -123,6 +146,12 @@ export JSP_SOURCE_DIR="/absolute/path/to/jsp/files"
 psql "$DATABASE_URL" -f db/schema.sql
 ```
 
+If `psql` is not on PATH (common on macOS/Homebrew), use:
+
+```bash
+/opt/homebrew/opt/postgresql@16/bin/psql "$DATABASE_URL" -f db/schema.sql
+```
+
 ## Run
 
 Start API + UI:
@@ -137,6 +166,14 @@ Initialize shared browser session (browser mode):
 
 ```bash
 npm run monitor:init-login
+```
+
+Note: `monitor:init-login` exits after session setup and closes the Playwright browser context.
+
+Keep browser open after login (manual verification/debug):
+
+```bash
+npm run monitor:init-login:keep-open
 ```
 
 Single monitor pass:
@@ -170,6 +207,7 @@ Use wrapper scripts if you keep env vars in `.env.local`:
 ```bash
 npm run web:local
 npm run monitor:init-login:local
+npm run monitor:init-login:keep-open:local
 npm run monitor:once:local
 npm run monitor:loop:local
 ```
@@ -207,6 +245,6 @@ bash scripts/uninstall-monitor-launchd.sh
 
 ## Current limitations
 
-- Email notifications are still stubs (console logs only).
+- No delivery history/retry queue persisted in DB yet.
 - No full authentication/authorization system yet (email-based ownership checks).
 - No dedicated unit/integration test suite yet.
