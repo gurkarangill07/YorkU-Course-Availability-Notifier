@@ -1,6 +1,6 @@
 # CourseNotif Context (Current Snapshot)
 
-Last updated: March 2, 2026
+Last updated: March 6, 2026
 
 ## 1) Project identity
 
@@ -34,6 +34,8 @@ Last updated: March 2, 2026
 - Single-page UI in `index.html`
 - Supports:
   - passwordless email OTP sign-in
+  - email input starts blank on unauthenticated load (no localStorage prefill)
+  - signed-in UI shows authenticated user email in the input
   - resend OTP with cooldown
   - logout
   - adding tracked course by cart ID

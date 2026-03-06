@@ -7,6 +7,8 @@ CourseNotif monitors tracked courses and notifies users when seats open (`os > 0
 - PostgreSQL-backed persistence (`users`, `courses`, `user_courses`, shared JSP cache, shared session state).
 - Express API + single-page web UI (`index.html`) for:
   - passwordless sign-in via email OTP
+  - email input starts blank on unauthenticated page load (no localStorage prefill)
+  - authenticated session view shows the signed-in email in the input
   - adding/listing/removing tracked courses
   - optional per-user custom course display name
 - Monitoring worker (`src/worker.js`) with modes:

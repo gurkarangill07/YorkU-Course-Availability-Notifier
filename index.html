@@ -252,6 +252,7 @@
                 setCourseActionsEnabled(true);
                 setAuthStatus(`Logged in as ${authUser.email}`);
             } else {
+                emailInput.value = '';
                 emailInput.readOnly = false;
                 sendOtpBtn.classList.remove('hidden');
                 logoutBtn.classList.add('hidden');
@@ -328,7 +329,6 @@
                     method: 'POST',
                     body: JSON.stringify({ email })
                 });
-                localStorage.setItem('coursenotif_email', email);
                 setOtpSectionVisible(true);
                 startOtpCooldown(result && result.resendAfterSeconds);
                 setAuthStatus(`OTP sent to ${email}. Enter the code to sign in.`);
@@ -463,11 +463,6 @@
         }
 
         async function initializePage() {
-            const savedEmail = localStorage.getItem('coursenotif_email');
-            if (savedEmail) {
-                document.getElementById('email').value = savedEmail;
-            }
-
             try {
                 await loadAuthSession();
                 await loadTrackedCourses();
