@@ -76,6 +76,13 @@ async function run() {
   const db = createDb({ databaseUrl: config.databaseUrl });
   await db.ensureCompatibility();
   const vsbSource = createVsbSource(db, config);
+  const notificationPolicy = {
+    retryBaseSeconds: config.notificationRetryBaseSeconds,
+    retryMaxSeconds: config.notificationRetryMaxSeconds,
+    maxAttempts: config.notificationMaxAttempts,
+    suppressionWindowMinutes: config.notificationSuppressionWindowMinutes,
+    dispatchBatchSize: config.notificationDispatchBatchSize
+  };
   const args = parseCliArgs(process.argv.slice(2));
 
   try {
@@ -95,6 +102,7 @@ async function run() {
         vsbSource,
         notifier,
         ownerAlertEmail: config.ownerAlertEmail,
+        notificationPolicy,
         userId: args.checkNewCourse.userId,
         cartId: args.checkNewCourse.cartId
       });
@@ -107,7 +115,8 @@ async function run() {
         db,
         vsbSource,
         notifier,
-        ownerAlertEmail: config.ownerAlertEmail
+        ownerAlertEmail: config.ownerAlertEmail,
+        notificationPolicy
       });
       console.log(`[worker] once summary=${JSON.stringify(summary)}`);
       return;
@@ -118,7 +127,8 @@ async function run() {
         db,
         vsbSource,
         notifier,
-        ownerAlertEmail: config.ownerAlertEmail
+        ownerAlertEmail: config.ownerAlertEmail,
+        notificationPolicy
       });
       console.log(`[worker] loop summary=${JSON.stringify(summary)}`);
       await sleep(config.monitorIntervalSeconds * 1000);

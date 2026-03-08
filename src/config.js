@@ -6,6 +6,10 @@ function parseIntEnv(value, fallback) {
   return parsed;
 }
 
+function parseIntEnvMin(value, fallback, minValue) {
+  return Math.max(minValue, parseIntEnv(value, fallback));
+}
+
 function parseBoolEnv(value, fallback) {
   if (value === undefined || value === null || value === "") {
     return fallback;
@@ -100,6 +104,31 @@ function loadConfig() {
     vsbRefreshIntervalMinutes: parseIntEnv(
       process.env.VSB_REFRESH_INTERVAL_MINUTES,
       15
+    ),
+    notificationRetryBaseSeconds: parseIntEnvMin(
+      process.env.NOTIFICATION_RETRY_BASE_SECONDS,
+      30,
+      1
+    ),
+    notificationRetryMaxSeconds: parseIntEnvMin(
+      process.env.NOTIFICATION_RETRY_MAX_SECONDS,
+      900,
+      1
+    ),
+    notificationMaxAttempts: parseIntEnvMin(
+      process.env.NOTIFICATION_MAX_ATTEMPTS,
+      5,
+      1
+    ),
+    notificationSuppressionWindowMinutes: parseIntEnvMin(
+      process.env.NOTIFICATION_SUPPRESSION_WINDOW_MINUTES,
+      30,
+      0
+    ),
+    notificationDispatchBatchSize: parseIntEnvMin(
+      process.env.NOTIFICATION_DISPATCH_BATCH_SIZE,
+      25,
+      1
     )
   };
 }
