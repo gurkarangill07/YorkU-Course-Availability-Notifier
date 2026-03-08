@@ -1,6 +1,6 @@
 # CourseNotif Context (Current Snapshot)
 
-Last updated: March 6, 2026
+Last updated: March 8, 2026
 
 ## 1) Project identity
 
@@ -90,12 +90,15 @@ Last updated: March 6, 2026
 - SMTP delivery is implemented via `nodemailer`
 - Gmail SMTP app-password flow is supported via environment variables
 - Separate SMTP password override is supported for auth OTP emails (`SMTP_PASS_AUTH`)
+- Delivery attempts are persisted in `notification_attempts`
+- Retry/backoff is implemented for transient send failures
+- Idempotency + suppression window logic are implemented for course-open alerts
 
 ## 3) What is not done yet
 
-1. Notification delivery hardening
-- SMTP provider integration is in place
-- No persisted delivery history/retry pipeline yet
+1. Notification observability UX
+- Reliability pipeline exists in backend DB + worker flow
+- No dedicated UI/reporting view for notification attempts yet
 
 2. Security and auth
 - Passwordless OTP auth/session model is implemented
@@ -146,11 +149,10 @@ Last updated: March 6, 2026
 
 ## 5) Immediate priorities
 
-1. Add delivery logging, retries, and idempotency for sent notifications
-2. Add parser + monitor + API automated tests
-3. Introduce authentication and identity-bound ownership checks
-4. Add structured logs/metrics and operational alerts/runbooks
-5. Harden retry/backoff and idempotency for notifications
+1. Add parser + monitor + API automated tests
+2. Introduce authentication and identity-bound ownership checks
+3. Add structured logs/metrics and operational alerts/runbooks
+4. Add notification-attempt visibility tooling (UI or admin endpoint)
 
 ## 6) Notes for future contributors/agents
 

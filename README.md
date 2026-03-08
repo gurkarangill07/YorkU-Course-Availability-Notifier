@@ -25,7 +25,11 @@ CourseNotif monitors tracked courses and notifies users when seats open (`os > 0
   - auto re-login support
   - shared session expiry tracking and owner alert emails
   - browser context auto-recovery when Playwright context/page is closed unexpectedly
-- Notifications are sent using SMTP via `nodemailer` (`src/notification.js`).
+- Notifications are sent using SMTP via `nodemailer` (`src/notification.js`) with:
+  - persisted delivery attempts in `notification_attempts`
+  - retry/backoff for transient delivery failures
+  - idempotency guard per tracked open-seat event
+  - suppression window policy to prevent near-duplicate sends
 
 ## Key files
 
@@ -83,6 +87,17 @@ export SMTP_USER="yourgmail@gmail.com"
 export SMTP_PASS="your_gmail_app_password"
 export SMTP_PASS_AUTH="your_auth_gmail_app_password"
 export SMTP_FROM="CourseNotif <yourgmail@gmail.com>"
+```
+
+Notification reliability policy (optional overrides):
+
+```bash
+export NOTIFICATION_RETRY_BASE_SECONDS="30"
+export NOTIFICATION_RETRY_MAX_SECONDS="900"
+export NOTIFICATION_MAX_ATTEMPTS="5"
+export NOTIFICATION_SUPPRESSION_WINDOW_MINUTES="30"
+export NOTIFICATION_DISPATCH_BATCH_SIZE="25"
+export NOTIFICATION_DISPATCH_LEASE_SECONDS="300"
 ```
 
 Passwordless auth settings:
@@ -262,6 +277,6 @@ bash scripts/uninstall-monitor-launchd.sh
 
 ## Current limitations
 
-- No delivery history/retry queue persisted in DB yet.
+- No dedicated UI/reporting page for notification delivery attempts yet.
 - OTP auth is implemented, but no external identity provider and no distributed/session revocation dashboard.
 - No dedicated unit/integration test suite yet.

@@ -105,6 +105,9 @@ async function sendMail({ toEmail, subject, text, html, passEnvName = "SMTP_PASS
       timestamp: new Date().toISOString()
     })
   );
+  return {
+    messageId: info && info.messageId ? String(info.messageId) : null
+  };
 }
 
 async function sendCourseOpenEmail({ toEmail, cartId, courseName, os }) {
@@ -125,7 +128,7 @@ async function sendCourseOpenEmail({ toEmail, cartId, courseName, os }) {
     `<p>Cart ID: <code>${cartIdText || "unknown"}</code></p>`
   ].join("");
 
-  await sendMail({
+  return sendMail({
     toEmail,
     subject,
     text,

@@ -81,7 +81,8 @@ async function run() {
     retryMaxSeconds: config.notificationRetryMaxSeconds,
     maxAttempts: config.notificationMaxAttempts,
     suppressionWindowMinutes: config.notificationSuppressionWindowMinutes,
-    dispatchBatchSize: config.notificationDispatchBatchSize
+    dispatchBatchSize: config.notificationDispatchBatchSize,
+    dispatchLeaseSeconds: config.notificationDispatchLeaseSeconds
   };
   const args = parseCliArgs(process.argv.slice(2));
 

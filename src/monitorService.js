@@ -5,7 +5,8 @@ const DEFAULT_NOTIFICATION_POLICY = {
   retryMaxSeconds: 900,
   maxAttempts: 5,
   suppressionWindowMinutes: 30,
-  dispatchBatchSize: 25
+  dispatchBatchSize: 25,
+  dispatchLeaseSeconds: 300
 };
 
 function parsePositiveInt(value, fallback) {
@@ -46,13 +47,18 @@ function normalizeNotificationPolicy(policy) {
     policy && policy.dispatchBatchSize,
     DEFAULT_NOTIFICATION_POLICY.dispatchBatchSize
   );
+  const dispatchLeaseSeconds = parsePositiveInt(
+    policy && policy.dispatchLeaseSeconds,
+    DEFAULT_NOTIFICATION_POLICY.dispatchLeaseSeconds
+  );
 
   return {
     retryBaseSeconds,
     retryMaxSeconds,
     maxAttempts,
     suppressionWindowMinutes,
-    dispatchBatchSize
+    dispatchBatchSize,
+    dispatchLeaseSeconds
   };
 }
 
@@ -66,7 +72,71 @@ function isSessionFailure(error) {
   );
 }
 
+function isPermanentNotificationError(error) {
+  const code = String((error && error.code) || "")
+    .trim()
+    .toUpperCase();
+  if (["EAUTH", "EENVELOPE", "EADDRESS"].includes(code)) {
+    return true;
+  }
+
+  const smtpCode = Number.parseInt(error && error.responseCode, 10);
+  if (
+    Number.isFinite(smtpCode) &&
+    [500, 501, 502, 503, 504, 530, 535, 550, 551, 552, 553, 554].includes(
+      smtpCode
+    )
+  ) {
+    return true;
+  }
+
+  const message = (error && error.message ? error.message : "").toLowerCase();
+  const permanentPatterns = [
+    "invalid login",
+    "invalid credentials",
+    "authentication failed",
+    "bad credentials",
+    "mailbox unavailable",
+    "recipient address rejected",
+    "user unknown"
+  ];
+  return permanentPatterns.some((pattern) => message.includes(pattern));
+}
+
 function isTransientNotificationError(error) {
+  if (isPermanentNotificationError(error)) {
+    return false;
+  }
+
+  const code = String((error && error.code) || "")
+    .trim()
+    .toUpperCase();
+  if (
+    [
+      "ETIMEDOUT",
+      "ECONNECTION",
+      "ECONNRESET",
+      "ECONNREFUSED",
+      "EHOSTUNREACH",
+      "ENOTFOUND",
+      "EAI_AGAIN",
+      "ESOCKET",
+      "EPIPE"
+    ].includes(code)
+  ) {
+    return true;
+  }
+
+  const smtpCode = Number.parseInt(error && error.responseCode, 10);
+  if (Number.isFinite(smtpCode)) {
+    if ([421, 429, 450, 451, 452, 454].includes(smtpCode)) {
+      return true;
+    }
+    if (smtpCode >= 500) {
+      return false;
+    }
+  }
+
   const message = (error && error.message ? error.message : "").toLowerCase();
   const transientPatterns = [
     "timeout",
@@ -88,6 +158,26 @@ function isTransientNotificationError(error) {
     "504"
   ];
   return transientPatterns.some((pattern) => message.includes(pattern));
+}
+
+function formatNotificationError(error) {
+  const message =
+    (error && error.message && String(error.message).trim()) ||
+    "Unknown notification error";
+  const code =
+    error && error.code ? String(error.code).trim().toUpperCase() : null;
+  const smtpCode = Number.parseInt(error && error.responseCode, 10);
+  const details = [];
+  if (code) {
+    details.push(`code=${code}`);
+  }
+  if (Number.isFinite(smtpCode)) {
+    details.push(`smtp=${smtpCode}`);
+  }
+  if (!details.length) {
+    return message;
+  }
+  return `${message} (${details.join(", ")})`;
 }
 
 function computeRetryDelayMs({
@@ -126,7 +216,8 @@ async function dispatchDueNotificationAttempts({
   notificationPolicy
 }) {
   const attempts = await db.claimDueNotificationAttempts({
-    limit: notificationPolicy.dispatchBatchSize
+    limit: notificationPolicy.dispatchBatchSize,
+    leaseSeconds: notificationPolicy.dispatchLeaseSeconds
   });
 
   const summary = {
@@ -146,13 +237,17 @@ async function dispatchDueNotificationAttempts({
     const os = Number.isFinite(Number(payload.os)) ? Number(payload.os) : 0;
 
     try {
-      await notifier.sendCourseOpenEmail({
+      const sendResult = await notifier.sendCourseOpenEmail({
         toEmail: attempt.toEmail,
         cartId: attempt.cartId,
         courseName,
         os
       });
-      await db.markNotificationAttemptSent({ attemptId: attempt.id });
+      await db.markNotificationAttemptSent({
+        attemptId: attempt.id,
+        providerMessageId:
+          sendResult && sendResult.messageId ? String(sendResult.messageId) : null
+      });
       summary.sent += 1;
     } catch (error) {
       const transient = isTransientNotificationError(error);
@@ -161,6 +256,7 @@ async function dispatchDueNotificationAttempts({
         transient && nextAttemptCount < attempt.maxAttempts;
       let nextStatus = "failed";
       let nextRetryAt = null;
+      const formattedError = formatNotificationError(error);
 
       if (canRetry) {
         nextStatus = "retrying";
@@ -174,7 +270,7 @@ async function dispatchDueNotificationAttempts({
 
       await db.markNotificationAttemptFailure({
         attemptId: attempt.id,
-        errorMessage: error.message,
+        errorMessage: formattedError,
         nextStatus,
         nextRetryAt
       });
@@ -186,7 +282,7 @@ async function dispatchDueNotificationAttempts({
       }
 
       console.error(
-        `[monitor] notification attempt id=${attempt.id} ${canRetry ? "retrying" : "failed"}: ${error.message}`
+        `[monitor] notification attempt id=${attempt.id} ${canRetry ? "retrying" : "failed"}: ${formattedError}`
       );
       continue;
     }
