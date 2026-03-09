@@ -3,7 +3,7 @@ const crypto = require("crypto");
 const path = require("path");
 const { loadConfig } = require("./config");
 const { createDb } = require("./db");
-const notifier = require("./notification");
+const defaultNotifier = require("./notification");
 
 const SESSION_COOKIE_NAME = "coursenotif_session";
 
@@ -115,24 +115,28 @@ function mapTrackedCourseRow(row) {
   };
 }
 
-async function main() {
-  const config = loadConfig();
-  const db = createDb({ databaseUrl: config.databaseUrl });
-  await db.ensureCompatibility();
+function createApiApp({
+  db,
+  notifierModule = defaultNotifier,
+  env = process.env
+} = {}) {
+  if (!db) {
+    throw new Error("createApiApp requires a db instance.");
+  }
+
   const app = express();
-  const port = Number.parseInt(process.env.PORT || "3000", 10);
-  const otpTtlMinutes = parseIntWithFallback(process.env.AUTH_OTP_TTL_MINUTES, 10);
+  const otpTtlMinutes = parseIntWithFallback(env.AUTH_OTP_TTL_MINUTES, 10);
   const otpResendCooldownSeconds = parseIntWithFallback(
-    process.env.AUTH_OTP_RESEND_COOLDOWN_SECONDS,
+    env.AUTH_OTP_RESEND_COOLDOWN_SECONDS,
     60
   );
   const otpMaxFailedAttempts = parseIntWithFallback(
-    process.env.AUTH_OTP_MAX_FAILED_ATTEMPTS,
+    env.AUTH_OTP_MAX_FAILED_ATTEMPTS,
     5
   );
-  const authSessionDays = parseIntWithFallback(process.env.AUTH_SESSION_DAYS, 30);
-  const authCookieSecure = parseBoolean(process.env.AUTH_COOKIE_SECURE, false);
-  const otpPepper = String(process.env.OTP_PEPPER || "").trim();
+  const authSessionDays = parseIntWithFallback(env.AUTH_SESSION_DAYS, 30);
+  const authCookieSecure = parseBoolean(env.AUTH_COOKIE_SECURE, false);
+  const otpPepper = String(env.OTP_PEPPER || "").trim();
   const authSessionMaxAgeMs = authSessionDays * 24 * 60 * 60 * 1000;
 
   app.use(express.json());
@@ -163,7 +167,9 @@ async function main() {
   }
 
   function hashOtpCode({ email, otp }) {
-    return hashSha256(`${String(email || "").trim().toLowerCase()}|${String(otp || "").trim()}|${otpPepper}`);
+    return hashSha256(
+      `${String(email || "").trim().toLowerCase()}|${String(otp || "").trim()}|${otpPepper}`
+    );
   }
 
   async function resolveAuth(req) {
@@ -269,7 +275,7 @@ async function main() {
       });
 
       try {
-        await notifier.sendLoginOtpEmail({
+        await notifierModule.sendLoginOtpEmail({
           toEmail: email,
           otpCode,
           expiresMinutes: otpTtlMinutes
@@ -457,22 +463,67 @@ async function main() {
     res.status(500).json({ error: "Internal server error." });
   });
 
+  return app;
+}
+
+async function startApiServer({
+  env = process.env,
+  notifierModule = defaultNotifier
+} = {}) {
+  const config = loadConfig(env);
+  const db = createDb({ databaseUrl: config.databaseUrl });
+  await db.ensureCompatibility();
+  const app = createApiApp({ db, notifierModule, env });
+  const port = Number.parseInt(env.PORT || "3000", 10);
+
   const server = app.listen(port, () => {
     console.log(`[api] listening on http://localhost:${port}`);
   });
 
-  async function shutdown() {
-    server.close(async () => {
-      await db.close();
-      process.exit(0);
+  async function shutdown({ exit = false } = {}) {
+    await new Promise((resolve) => {
+      server.close(async () => {
+        await db.close();
+        resolve();
+      });
     });
+    if (exit) {
+      process.exit(0);
+    }
   }
 
-  process.on("SIGINT", shutdown);
-  process.on("SIGTERM", shutdown);
+  return {
+    app,
+    server,
+    db,
+    shutdown
+  };
 }
 
-main().catch((error) => {
-  console.error(`[api] fatal: ${error.message}`);
-  process.exit(1);
-});
+async function main() {
+  const runtime = await startApiServer();
+  let shuttingDown = false;
+
+  async function handleShutdown() {
+    if (shuttingDown) {
+      return;
+    }
+    shuttingDown = true;
+    await runtime.shutdown({ exit: true });
+  }
+
+  process.on("SIGINT", handleShutdown);
+  process.on("SIGTERM", handleShutdown);
+}
+
+module.exports = {
+  createApiApp,
+  startApiServer
+};
+
+if (require.main === module) {
+  main().catch((error) => {
+    console.error(`[api] fatal: ${error.message}`);
+    process.exit(1);
+  });
+}

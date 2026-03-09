@@ -1,6 +1,6 @@
 # CourseNotif Roadmap (Implementation-Aligned)
 
-Last updated: March 8, 2026
+Last updated: March 9, 2026
 
 Planning note: keep this file aligned with `README.md` and `context` after major implementation changes.
 
@@ -28,6 +28,8 @@ Planning note: keep this file aligned with `README.md` and `context` after major
   - idempotency guard for open-seat events
   - suppression-window duplicate prevention
 - Passwordless email OTP auth + session cookie flow exists for API access control.
+- Automated tests are in place for parser, monitor dispatch logic, and API auth/course CRUD basics.
+- CI checks run smoke + tests on PRs and main pushes.
 
 ## Phase 1: Notification delivery reliability (completed)
 
@@ -60,15 +62,22 @@ Exit criteria:
 - Only authenticated users can manage their own tracked courses.
 - Unauthorized requests are blocked and auditable.
 
-## Phase 3: Tests and CI quality gates
+## Phase 3: Tests and CI quality gates (in progress)
 
 Goal: reduce regressions and raise deploy confidence.
 
-- Add unit tests for `src/jspParser.js` payload variants.
-- Add unit tests for `src/monitorService.js` session/error/notify paths.
-- Add integration tests for API routes (`resolve`, list/add/delete tracking).
-- Add fixtures for representative `getClassData.jsp` responses.
-- Add CI checks for tests + syntax/static validation.
+Delivered so far:
+
+- Unit tests for `src/jspParser.js` payload variants.
+- Unit tests for `src/monitorService.js` dispatch retry/success/failure paths.
+- Integration test for API auth + tracked-course CRUD.
+- CI workflow runs schema apply + smoke + tests and fails on regressions.
+
+Remaining:
+
+- Expand parser fixtures for more real-world `getClassData.jsp` variants.
+- Add monitor tests for session recovery branches and full scan loops.
+- Add broader API integration coverage for negative/error cases and authorization edges.
 
 Exit criteria:
 - Parser, monitor, and API core paths are covered by automated tests.
@@ -110,6 +119,6 @@ Exit criteria:
 
 ## Immediate next actions (recommended order)
 
-1. Add parser + monitor + API automated tests.
+1. Expand automated test coverage depth (parser fixtures, monitor session branches, API negative cases).
 2. Introduce authentication and identity-bound ownership checks.
 3. Add structured logs/metrics and operational alerts/runbooks.

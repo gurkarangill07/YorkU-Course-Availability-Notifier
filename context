@@ -1,6 +1,6 @@
 # CourseNotif Context (Current Snapshot)
 
-Last updated: March 8, 2026
+Last updated: March 9, 2026
 
 ## 1) Project identity
 
@@ -94,6 +94,14 @@ Last updated: March 8, 2026
 - Retry/backoff is implemented for transient send failures
 - Idempotency + suppression window logic are implemented for course-open alerts
 
+8. Tests and CI
+- Automated tests exist under `test/`:
+  - parser unit tests (`test/jspParser.test.js`)
+  - monitor dispatch/retry unit tests (`test/monitorService.test.js`)
+  - API auth + tracked-course integration test (`test/api.integration.test.js`)
+- CI workflow exists at `.github/workflows/ci.yml`
+- CI applies DB schema and runs smoke + tests on pull requests and pushes to `main`
+
 ## 3) What is not done yet
 
 1. Notification observability UX
@@ -106,8 +114,8 @@ Last updated: March 8, 2026
 - Remaining work: stronger abuse controls (IP/device rate limiting), session management UX, and deeper auditability
 
 3. Automated testing and CI quality gates
-- No dedicated unit/integration test suite yet
-- Current built-in check is syntax smoke (`npm run smoke`)
+- Core parser/monitor/API paths have test coverage
+- Coverage is still incomplete for browser automation/session-recovery branches
 
 4. Production observability
 - No formal metrics, alerting, or full runbooks yet
@@ -149,7 +157,7 @@ Last updated: March 8, 2026
 
 ## 5) Immediate priorities
 
-1. Add parser + monitor + API automated tests
+1. Expand automated test coverage depth (parser fixtures, monitor session branches, API negative cases)
 2. Introduce authentication and identity-bound ownership checks
 3. Add structured logs/metrics and operational alerts/runbooks
 4. Add notification-attempt visibility tooling (UI or admin endpoint)
