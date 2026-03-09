@@ -30,6 +30,8 @@ CourseNotif monitors tracked courses and notifies users when seats open (`os > 0
   - retry/backoff for transient delivery failures
   - idempotency guard per tracked open-seat event
   - suppression window policy to prevent near-duplicate sends
+- Automated tests exist for parser, monitor dispatch logic, and API auth/course flows (`test/*.test.js`).
+- CI workflow runs on PRs and `main` pushes and fails on smoke/test regressions (`.github/workflows/ci.yml`).
 
 ## Key files
 
@@ -42,6 +44,8 @@ CourseNotif monitors tracked courses and notifies users when seats open (`os > 0
 - `src/jspParser.js`: parser for JSON/XML-like JSP payload variants
 - `src/db.js`: PostgreSQL access layer
 - `db/schema.sql`: schema and compatibility migration guards
+- `test/*.test.js`: unit + integration tests
+- `.github/workflows/ci.yml`: CI gates (smoke + tests)
 - `scripts/*.sh`: env loader, supervisor scripts, and launchd helpers
 
 ## Setup
@@ -229,6 +233,19 @@ Syntax smoke check:
 npm run smoke
 ```
 
+Run automated tests:
+
+```bash
+npm run db:schema:apply
+npm test
+```
+
+Run local CI-equivalent gate:
+
+```bash
+npm run ci
+```
+
 ## Local env helpers (`.env.local`)
 
 Use wrapper scripts if you keep env vars in `.env.local`:
@@ -279,4 +296,4 @@ bash scripts/uninstall-monitor-launchd.sh
 
 - No dedicated UI/reporting page for notification delivery attempts yet.
 - OTP auth is implemented, but no external identity provider and no distributed/session revocation dashboard.
-- No dedicated unit/integration test suite yet.
+- Test coverage is still limited and does not yet cover full browser automation paths.

@@ -729,6 +729,16 @@ function createDb({ databaseUrl }) {
           return { action: "already_queued", attempt: existing };
         }
 
+        if (existing.status === "failed") {
+          await client.query("COMMIT");
+          return { action: "already_failed", attempt: existing };
+        }
+
+        if (existing.status === "suppressed") {
+          await client.query("COMMIT");
+          return { action: "already_suppressed", attempt: existing };
+        }
+
         const { rows: resetRows } = await client.query(
           `
           UPDATE notification_attempts
@@ -844,6 +854,14 @@ function createDb({ databaseUrl }) {
       if (conflicted.status === "pending" || conflicted.status === "retrying") {
         await client.query("COMMIT");
         return { action: "already_queued", attempt: conflicted };
+      }
+      if (conflicted.status === "failed") {
+        await client.query("COMMIT");
+        return { action: "already_failed", attempt: conflicted };
+      }
+      if (conflicted.status === "suppressed") {
+        await client.query("COMMIT");
+        return { action: "already_suppressed", attempt: conflicted };
       }
 
       const { rows: resetRows } = await client.query(
