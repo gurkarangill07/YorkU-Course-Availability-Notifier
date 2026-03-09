@@ -59,6 +59,15 @@ function createDb({ databaseUrl }) {
       `
       ALTER TABLE user_courses
       ADD COLUMN IF NOT EXISTS display_name TEXT;
+      ALTER TABLE user_courses
+      ADD COLUMN IF NOT EXISTS tracking_status TEXT NOT NULL DEFAULT 'active';
+      ALTER TABLE user_courses
+      ADD COLUMN IF NOT EXISTS notified_at TIMESTAMPTZ;
+      ALTER TABLE user_courses
+      DROP CONSTRAINT IF EXISTS user_courses_tracking_status_check;
+      ALTER TABLE user_courses
+      ADD CONSTRAINT user_courses_tracking_status_check
+      CHECK (tracking_status IN ('active', 'notified'));
 
       CREATE TABLE IF NOT EXISTS notification_attempts (
         id BIGSERIAL PRIMARY KEY,
@@ -109,6 +118,8 @@ function createDb({ databaseUrl }) {
         ON notification_attempts(event_type, suppression_key, sent_at DESC);
       CREATE INDEX IF NOT EXISTS idx_notification_attempts_user_course
         ON notification_attempts(user_course_id);
+      CREATE INDEX IF NOT EXISTS idx_user_courses_tracking_status
+        ON user_courses(tracking_status);
       `
     );
 
@@ -239,11 +250,14 @@ function createDb({ databaseUrl }) {
         u.email,
         uc.cart_id,
         uc.display_name,
+        uc.tracking_status,
+        uc.notified_at,
         c.course_name,
         c.os
       FROM user_courses uc
       INNER JOIN users u ON u.id = uc.user_id
       LEFT JOIN courses c ON c.cart_id = uc.cart_id
+      WHERE uc.tracking_status = 'active'
       ORDER BY uc.id ASC
       `
     );
@@ -439,6 +453,8 @@ function createDb({ databaseUrl }) {
         u.email,
         uc.cart_id,
         uc.display_name,
+        uc.tracking_status,
+        uc.notified_at,
         c.course_name,
         c.os
       FROM user_courses uc
@@ -460,6 +476,8 @@ function createDb({ databaseUrl }) {
         uc.user_id,
         uc.cart_id,
         uc.display_name,
+        uc.tracking_status,
+        uc.notified_at,
         uc.created_at,
         c.course_name,
         c.os
@@ -487,6 +505,34 @@ function createDb({ databaseUrl }) {
     const { rowCount } = await pool.query(
       `
       DELETE FROM user_courses
+      WHERE id = $1 AND user_id = $2
+      `,
+      [userCourseId, userId]
+    );
+    return rowCount;
+  }
+
+  async function markUserCourseNotified(userCourseId) {
+    const { rowCount } = await pool.query(
+      `
+      UPDATE user_courses
+      SET
+        tracking_status = 'notified',
+        notified_at = NOW()
+      WHERE id = $1
+      `,
+      [userCourseId]
+    );
+    return rowCount;
+  }
+
+  async function resumeUserCourseForUser({ userCourseId, userId }) {
+    const { rowCount } = await pool.query(
+      `
+      UPDATE user_courses
+      SET
+        tracking_status = 'active',
+        notified_at = NULL
       WHERE id = $1 AND user_id = $2
       `,
       [userCourseId, userId]
@@ -1057,9 +1103,11 @@ function createDb({ databaseUrl }) {
         user_id,
         cart_id,
         display_name,
+        tracking_status,
+        notified_at,
         created_at
       )
-      VALUES ($1, $2, $3, NOW())
+      VALUES ($1, $2, $3, 'active', NULL, NOW())
       ON CONFLICT (user_id, cart_id) DO NOTHING
       RETURNING id
       `,
@@ -1091,6 +1139,8 @@ function createDb({ databaseUrl }) {
     getTrackedCourseByUserAndCart,
     stopTrackingUserCourse,
     stopTrackingUserCourseForUser,
+    markUserCourseNotified,
+    resumeUserCourseForUser,
     ensureCourseExists,
     setUserCourseDisplayName,
     setCourseDisplayName,

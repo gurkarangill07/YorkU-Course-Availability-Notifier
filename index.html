@@ -116,6 +116,18 @@
             font-size: 0.85rem;
         }
 
+        .resume-btn {
+            background-color: #059669;
+            width: auto;
+            padding: 6px 12px;
+            font-size: 0.85rem;
+        }
+
+        .item-actions {
+            display: flex;
+            gap: 8px;
+        }
+
         .empty-state {
             text-align: center;
             color: #9ca3af;
@@ -177,9 +189,9 @@
 
         <!-- Section 3: Tracked Courses List -->
         <div class="card">
-            <label>Currently Tracked Courses</label>
+            <label>Tracked Courses</label>
             <ul id="trackingList" class="course-list">
-                <li class="empty-state">No courses being tracked yet.</li>
+                <li class="empty-state">No tracked courses yet.</li>
             </ul>
         </div>
     </div>
@@ -414,7 +426,9 @@
                     method: 'POST',
                     body: JSON.stringify(payload)
                 });
-                if (!result.created) {
+                if (!result.created && result.resumed) {
+                    alert("Tracking resumed for this course.");
+                } else if (!result.created) {
                     alert("You are already tracking this course.");
                 }
                 courseInput.value = '';
@@ -440,23 +454,48 @@
             }
         }
 
+        async function resumeTracking(id) {
+            if (!authUser) {
+                return;
+            }
+
+            try {
+                await apiRequest(`/api/tracked-courses/${id}/resume`, {
+                    method: 'POST'
+                });
+                await loadTrackedCourses();
+            } catch (error) {
+                alert(error.message);
+            }
+        }
+
         function renderList() {
             const list = document.getElementById('trackingList');
             list.innerHTML = '';
 
             if (trackedCourses.length === 0) {
-                list.innerHTML = '<li class="empty-state">No courses being tracked yet.</li>';
+                list.innerHTML = '<li class="empty-state">No tracked courses yet.</li>';
                 return;
             }
 
             trackedCourses.forEach(course => {
+                const isNotified = course.trackingStatus === 'notified';
+                const stateLabel = isNotified ? 'Notified - awaiting your action' : 'Actively tracking';
                 const li = document.createElement('li');
                 li.className = 'course-item';
+                const actionsHtml = isNotified
+                    ? `<div class="item-actions">
+                        <button class="resume-btn" onclick="resumeTracking(${course.id})">Track Again</button>
+                        <button class="stop-btn" onclick="stopTracking(${course.id})">Remove</button>
+                       </div>`
+                    : `<button class="stop-btn" onclick="stopTracking(${course.id})">Stop Tracking</button>`;
+
                 li.innerHTML = `
                     <div class="course-info">
                         <strong>${escapeHtml(course.courseName || course.cartId)}</strong>
+                        <span>${escapeHtml(stateLabel)}</span>
                     </div>
-                    <button class="stop-btn" onclick="stopTracking(${course.id})">Stop Tracking</button>
+                    ${actionsHtml}
                 `;
                 list.appendChild(li);
             });

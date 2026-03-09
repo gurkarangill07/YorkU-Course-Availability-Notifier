@@ -114,18 +114,26 @@ async function sendCourseOpenEmail({ toEmail, cartId, courseName, os }) {
   const cartIdText = String(cartId || "").trim();
   const courseTitle = String(courseName || cartIdText || "Tracked course").trim();
   const openSeats = Number.isFinite(Number(os)) ? Number(os) : 0;
+  const appUrl = String(process.env.APP_BASE_URL || "http://localhost:3000").trim();
 
   const subject = `Course ${cartIdText || courseTitle} is now open`;
   const text = [
     "Good news!",
     "",
     `${courseTitle} now has ${openSeats} open seat(s).`,
-    `Cart ID: ${cartIdText || "unknown"}`
+    `Cart ID: ${cartIdText || "unknown"}`,
+    "",
+    "After you enroll, open CourseNotif to either:",
+    "- Remove this course from your list",
+    "- Track it again if it becomes full",
+    `Open: ${appUrl}`
   ].join("\n");
   const html = [
     "<p><strong>Good news!</strong></p>",
     `<p>${courseTitle} now has <strong>${openSeats}</strong> open seat(s).</p>`,
-    `<p>Cart ID: <code>${cartIdText || "unknown"}</code></p>`
+    `<p>Cart ID: <code>${cartIdText || "unknown"}</code></p>`,
+    "<p>After you enroll, open CourseNotif to either remove this course or track it again if it fills up.</p>",
+    `<p><a href="${appUrl}">Open CourseNotif</a></p>`
   ].join("");
 
   return sendMail({

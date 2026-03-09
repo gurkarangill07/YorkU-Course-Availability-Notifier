@@ -289,13 +289,11 @@ async function dispatchDueNotificationAttempts({
 
     if (attempt.userCourseId) {
       try {
-        await db.stopTrackingUserCourse(attempt.userCourseId);
+        await db.markUserCourseNotified(attempt.userCourseId);
         summary.stopped += 1;
       } catch (stopError) {
         summary.failed += 1;
-        console.error(
-          `[monitor] sent notification attempt id=${attempt.id} but failed to stop tracking user_course_id=${attempt.userCourseId}: ${stopError.message}`
-        );
+        console.error(`[monitor] sent notification attempt id=${attempt.id} but failed to mark user_course_id=${attempt.userCourseId} as notified: ${stopError.message}`);
       }
     }
   }
@@ -379,9 +377,9 @@ async function processTrackedCourse({
       enqueueResult.action === "suppressed" ||
       enqueueResult.action === "already_sent"
     ) {
-      await db.stopTrackingUserCourse(target.user_course_id);
+      await db.markUserCourseNotified(target.user_course_id);
       return {
-        status: "suppressed_and_stopped",
+        status: "suppressed_and_notified",
         queueAction: enqueueResult.action,
         os: parsed.os
       };
@@ -490,7 +488,7 @@ async function monitorOnce({
         if (result.queueAction === "queued" || result.queueAction === "requeued") {
           summary.queued += 1;
         }
-      } else if (result.status === "suppressed_and_stopped") {
+      } else if (result.status === "suppressed_and_notified") {
         summary.suppressed += 1;
         summary.stopped += 1;
       }
@@ -518,7 +516,7 @@ async function monitorOnce({
                 ) {
                   summary.queued += 1;
                 }
-              } else if (retryResult.status === "suppressed_and_stopped") {
+              } else if (retryResult.status === "suppressed_and_notified") {
                 summary.suppressed += 1;
                 summary.stopped += 1;
               }

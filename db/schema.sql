@@ -55,6 +55,9 @@ CREATE TABLE IF NOT EXISTS user_courses (
   user_id BIGINT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
   cart_id TEXT NOT NULL REFERENCES courses(cart_id) ON DELETE CASCADE,
   display_name TEXT,
+  tracking_status TEXT NOT NULL DEFAULT 'active'
+    CHECK (tracking_status IN ('active', 'notified')),
+  notified_at TIMESTAMPTZ,
   created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
   CONSTRAINT user_courses_user_id_cart_id_unique UNIQUE (user_id, cart_id)
 );
@@ -147,9 +150,19 @@ ALTER TABLE shared_vsb_session
 -- Migration guard for newer user course naming behavior:
 ALTER TABLE user_courses
   ADD COLUMN IF NOT EXISTS display_name TEXT;
+ALTER TABLE user_courses
+  ADD COLUMN IF NOT EXISTS tracking_status TEXT NOT NULL DEFAULT 'active';
+ALTER TABLE user_courses
+  ADD COLUMN IF NOT EXISTS notified_at TIMESTAMPTZ;
+ALTER TABLE user_courses
+  DROP CONSTRAINT IF EXISTS user_courses_tracking_status_check;
+ALTER TABLE user_courses
+  ADD CONSTRAINT user_courses_tracking_status_check
+  CHECK (tracking_status IN ('active', 'notified'));
 
 CREATE INDEX IF NOT EXISTS idx_user_courses_user_id ON user_courses(user_id);
 CREATE INDEX IF NOT EXISTS idx_user_courses_cart_id ON user_courses(cart_id);
+CREATE INDEX IF NOT EXISTS idx_user_courses_tracking_status ON user_courses(tracking_status);
 CREATE INDEX IF NOT EXISTS idx_notification_attempts_due
   ON notification_attempts(status, next_retry_at, id);
 CREATE INDEX IF NOT EXISTS idx_notification_attempts_suppression
