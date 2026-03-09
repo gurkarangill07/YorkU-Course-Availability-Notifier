@@ -526,18 +526,73 @@ function createDb({ databaseUrl }) {
     return rowCount;
   }
 
-  async function resumeUserCourseForUser({ userCourseId, userId }) {
-    const { rowCount } = await pool.query(
+  async function resetNotificationStateForUserCourse(userCourseId) {
+    await pool.query(
       `
-      UPDATE user_courses
+      UPDATE notification_attempts
       SET
-        tracking_status = 'active',
-        notified_at = NULL
-      WHERE id = $1 AND user_id = $2
+        idempotency_key = idempotency_key || ':archived:' || id::text || ':' ||
+          FLOOR(EXTRACT(EPOCH FROM NOW()) * 1000)::text,
+        suppression_key = CASE
+          WHEN suppression_key IS NULL THEN NULL
+          ELSE suppression_key || ':archived:' || id::text || ':' ||
+            FLOOR(EXTRACT(EPOCH FROM NOW()) * 1000)::text
+        END,
+        updated_at = NOW()
+      WHERE user_course_id = $1
       `,
-      [userCourseId, userId]
+      [userCourseId]
     );
-    return rowCount;
+  }
+
+  async function resumeUserCourseForUser({ userCourseId, userId }) {
+    const client = await pool.connect();
+    try {
+      await client.query("BEGIN");
+      const { rowCount } = await client.query(
+        `
+        UPDATE user_courses
+        SET
+          tracking_status = 'active',
+          notified_at = NULL
+        WHERE id = $1 AND user_id = $2
+        `,
+        [userCourseId, userId]
+      );
+      if (!rowCount) {
+        await client.query("ROLLBACK");
+        return 0;
+      }
+
+      await client.query(
+        `
+        UPDATE notification_attempts
+        SET
+          idempotency_key = idempotency_key || ':archived:' || id::text || ':' ||
+            FLOOR(EXTRACT(EPOCH FROM NOW()) * 1000)::text,
+          suppression_key = CASE
+            WHEN suppression_key IS NULL THEN NULL
+            ELSE suppression_key || ':archived:' || id::text || ':' ||
+              FLOOR(EXTRACT(EPOCH FROM NOW()) * 1000)::text
+          END,
+          updated_at = NOW()
+        WHERE user_course_id = $1
+        `,
+        [userCourseId]
+      );
+
+      await client.query("COMMIT");
+      return rowCount;
+    } catch (error) {
+      try {
+        await client.query("ROLLBACK");
+      } catch (_) {
+        // Ignore rollback errors and rethrow original error.
+      }
+      throw error;
+    } finally {
+      client.release();
+    }
   }
 
   async function upsertCourseFromJsp({ cartId, courseName, os }) {
@@ -1140,6 +1195,7 @@ function createDb({ databaseUrl }) {
     stopTrackingUserCourse,
     stopTrackingUserCourseForUser,
     markUserCourseNotified,
+    resetNotificationStateForUserCourse,
     resumeUserCourseForUser,
     ensureCourseExists,
     setUserCourseDisplayName,

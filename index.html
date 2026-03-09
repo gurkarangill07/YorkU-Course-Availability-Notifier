@@ -201,6 +201,10 @@
         let authUser = null;
         let otpCooldownEndTs = 0;
         let otpCooldownIntervalId = null;
+        let trackedCoursesRefreshIntervalId = null;
+        let trackedCoursesRefreshInFlight = false;
+        const TRACKED_COURSES_REFRESH_MS = 10000;
+        const AUTO_LOGOUT_ON_TAB_CLOSE = true;
 
         function escapeHtml(text) {
             const map = {
@@ -263,6 +267,7 @@
                 logoutBtn.classList.remove('hidden');
                 setCourseActionsEnabled(true);
                 setAuthStatus(`Logged in as ${authUser.email}`);
+                startTrackedCoursesAutoRefresh();
             } else {
                 emailInput.value = '';
                 emailInput.readOnly = false;
@@ -277,7 +282,32 @@
                     setOtpSectionVisible(false);
                 }
                 setAuthStatus('Not signed in.');
+                stopTrackedCoursesAutoRefresh();
             }
+        }
+
+        function stopTrackedCoursesAutoRefresh() {
+            if (trackedCoursesRefreshIntervalId) {
+                clearInterval(trackedCoursesRefreshIntervalId);
+                trackedCoursesRefreshIntervalId = null;
+            }
+        }
+
+        function startTrackedCoursesAutoRefresh() {
+            stopTrackedCoursesAutoRefresh();
+            trackedCoursesRefreshIntervalId = setInterval(async () => {
+                if (!authUser || document.hidden || trackedCoursesRefreshInFlight) {
+                    return;
+                }
+                trackedCoursesRefreshInFlight = true;
+                try {
+                    await loadTrackedCourses();
+                } catch (_) {
+                    // Ignore transient refresh failures and retry on next interval.
+                } finally {
+                    trackedCoursesRefreshInFlight = false;
+                }
+            }, TRACKED_COURSES_REFRESH_MS);
         }
 
         function startOtpCooldown(seconds) {
@@ -515,6 +545,41 @@
 
             renderList();
         }
+
+        function logoutOnTabClose() {
+            if (!AUTO_LOGOUT_ON_TAB_CLOSE || !authUser) {
+                return;
+            }
+            try {
+                if (navigator.sendBeacon) {
+                    const payload = new Blob(['{}'], { type: 'application/json' });
+                    navigator.sendBeacon('/api/auth/logout', payload);
+                    return;
+                }
+                fetch('/api/auth/logout', {
+                    method: 'POST',
+                    credentials: 'same-origin',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: '{}',
+                    keepalive: true
+                });
+            } catch (_) {
+                // Best effort only.
+            }
+        }
+
+        document.addEventListener('visibilitychange', async () => {
+            if (!document.hidden && authUser) {
+                try {
+                    await loadTrackedCourses();
+                } catch (_) {
+                    // Ignore focus refresh errors.
+                }
+            }
+        });
+
+        window.addEventListener('pagehide', logoutOnTabClose);
+        window.addEventListener('beforeunload', logoutOnTabClose);
 
         initializePage();
     </script>
