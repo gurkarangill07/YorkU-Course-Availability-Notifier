@@ -1,6 +1,6 @@
 # CourseNotif Roadmap (Implementation-Aligned)
 
-Last updated: February 25, 2026
+Last updated: March 8, 2026
 
 Planning note: keep this file aligned with `README.md` and `context` after major implementation changes.
 
@@ -22,17 +22,24 @@ Planning note: keep this file aligned with `README.md` and `context` after major
   - supervisor loop (`scripts/start-monitor-supervisor.sh`, `scripts/stop-monitor-supervisor.sh`)
   - macOS launchd install/uninstall helpers
 - Notification functions send SMTP email via `nodemailer` (Gmail-compatible).
+- Notification delivery reliability is implemented via `notification_attempts`:
+  - persisted delivery attempts/outcomes
+  - transient-failure retry/backoff
+  - idempotency guard for open-seat events
+  - suppression-window duplicate prevention
 - Passwordless email OTP auth + session cookie flow exists for API access control.
 
-## Phase 1: Notification delivery reliability
+## Phase 1: Notification delivery reliability (completed)
 
 Goal: harden live SMTP delivery for reliability and traceability.
 
-- Keep SMTP provider integration configurable (currently Gmail-compatible).
-- Persist delivery attempts and outcomes in DB.
-- Add retry/backoff for transient send failures.
-- Add idempotency guard for open-seat events.
-- Add dedupe/suppression window policy.
+Delivered:
+
+- SMTP provider integration remains configurable (currently Gmail-compatible).
+- Delivery attempts and outcomes are persisted in DB.
+- Retry/backoff for transient send failures is implemented.
+- Idempotency guard for open-seat events is implemented.
+- Dedupe/suppression window policy is implemented.
 
 Exit criteria:
 - End-to-end open-seat flow sends real emails in production.
@@ -103,7 +110,6 @@ Exit criteria:
 
 ## Immediate next actions (recommended order)
 
-1. Add delivery logging/retries/idempotency for SMTP notifications.
-2. Add parser + monitor + API automated tests.
-3. Introduce authentication and identity-bound ownership checks.
-4. Add structured logs/metrics and operational alerts/runbooks.
+1. Add parser + monitor + API automated tests.
+2. Introduce authentication and identity-bound ownership checks.
+3. Add structured logs/metrics and operational alerts/runbooks.

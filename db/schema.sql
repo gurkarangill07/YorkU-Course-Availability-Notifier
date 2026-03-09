@@ -6,6 +6,7 @@
 -- 4) one shared latest JSP/XHR file for all users
 -- 5) one shared VSB login/session for all users
 -- 6) email OTP auth sessions for API access control
+-- 7) durable notification delivery attempts + retries
 
 BEGIN;
 
@@ -58,6 +59,51 @@ CREATE TABLE IF NOT EXISTS user_courses (
   CONSTRAINT user_courses_user_id_cart_id_unique UNIQUE (user_id, cart_id)
 );
 
+-- Durable notification queue/attempt log for course-open emails.
+CREATE TABLE IF NOT EXISTS notification_attempts (
+  id BIGSERIAL PRIMARY KEY,
+  event_type TEXT NOT NULL CHECK (event_type IN ('course_open')),
+  idempotency_key TEXT NOT NULL UNIQUE,
+  suppression_key TEXT,
+  user_id BIGINT REFERENCES users(id) ON DELETE SET NULL,
+  user_course_id BIGINT REFERENCES user_courses(id) ON DELETE SET NULL,
+  cart_id TEXT NOT NULL,
+  to_email TEXT NOT NULL,
+  payload_json JSONB NOT NULL DEFAULT '{}'::jsonb,
+  status TEXT NOT NULL DEFAULT 'pending'
+    CHECK (status IN ('pending', 'retrying', 'sent', 'failed', 'suppressed')),
+  attempt_count INTEGER NOT NULL DEFAULT 0 CHECK (attempt_count >= 0),
+  max_attempts INTEGER NOT NULL DEFAULT 5 CHECK (max_attempts >= 1),
+  next_retry_at TIMESTAMPTZ,
+  last_attempted_at TIMESTAMPTZ,
+  sent_at TIMESTAMPTZ,
+  suppressed_until TIMESTAMPTZ,
+  provider_message_id TEXT,
+  last_error TEXT,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+-- Migration guards for older versions:
+ALTER TABLE notification_attempts
+  ADD COLUMN IF NOT EXISTS suppression_key TEXT;
+ALTER TABLE notification_attempts
+  ADD COLUMN IF NOT EXISTS payload_json JSONB NOT NULL DEFAULT '{}'::jsonb;
+ALTER TABLE notification_attempts
+  ADD COLUMN IF NOT EXISTS max_attempts INTEGER NOT NULL DEFAULT 5;
+ALTER TABLE notification_attempts
+  ADD COLUMN IF NOT EXISTS next_retry_at TIMESTAMPTZ;
+ALTER TABLE notification_attempts
+  ADD COLUMN IF NOT EXISTS last_attempted_at TIMESTAMPTZ;
+ALTER TABLE notification_attempts
+  ADD COLUMN IF NOT EXISTS sent_at TIMESTAMPTZ;
+ALTER TABLE notification_attempts
+  ADD COLUMN IF NOT EXISTS suppressed_until TIMESTAMPTZ;
+ALTER TABLE notification_attempts
+  ADD COLUMN IF NOT EXISTS provider_message_id TEXT;
+ALTER TABLE notification_attempts
+  ADD COLUMN IF NOT EXISTS last_error TEXT;
+
 -- Stores one shared latest JSP/XHR file for the whole app (not user-specific).
 CREATE TABLE IF NOT EXISTS shared_latest_jsp_file (
   singleton_id SMALLINT PRIMARY KEY DEFAULT 1 CHECK (singleton_id = 1),
@@ -104,6 +150,12 @@ ALTER TABLE user_courses
 
 CREATE INDEX IF NOT EXISTS idx_user_courses_user_id ON user_courses(user_id);
 CREATE INDEX IF NOT EXISTS idx_user_courses_cart_id ON user_courses(cart_id);
+CREATE INDEX IF NOT EXISTS idx_notification_attempts_due
+  ON notification_attempts(status, next_retry_at, id);
+CREATE INDEX IF NOT EXISTS idx_notification_attempts_suppression
+  ON notification_attempts(event_type, suppression_key, sent_at DESC);
+CREATE INDEX IF NOT EXISTS idx_notification_attempts_user_course
+  ON notification_attempts(user_course_id);
 CREATE INDEX IF NOT EXISTS idx_shared_vsb_session_state ON shared_vsb_session(session_state);
 CREATE INDEX IF NOT EXISTS idx_auth_otp_challenges_email_created_at
   ON auth_otp_challenges(email, created_at DESC);

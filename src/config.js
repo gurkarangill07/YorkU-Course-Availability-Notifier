@@ -129,6 +129,11 @@ function loadConfig() {
       process.env.NOTIFICATION_DISPATCH_BATCH_SIZE,
       25,
       1
+    ),
+    notificationDispatchLeaseSeconds: parseIntEnvMin(
+      process.env.NOTIFICATION_DISPATCH_LEASE_SECONDS,
+      300,
+      1
     )
   };
 }

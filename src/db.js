@@ -612,115 +612,241 @@ function createDb({ databaseUrl }) {
       os: Number.isFinite(Number(os)) ? Number(os) : 0
     };
 
-    if (safeSuppressionMinutes > 0) {
-      const suppressionCutoff = new Date(
-        Date.now() - safeSuppressionMinutes * 60 * 1000
-      );
-      const { rows: recentSentRows } = await pool.query(
+    const payloadJson = JSON.stringify(payload);
+    const client = await pool.connect();
+    try {
+      await client.query("BEGIN");
+
+      if (safeSuppressionMinutes > 0) {
+        const suppressionCutoff = new Date(
+          Date.now() - safeSuppressionMinutes * 60 * 1000
+        );
+        const { rows: recentSentRows } = await client.query(
+          `
+          SELECT id, sent_at
+          FROM notification_attempts
+          WHERE event_type = 'course_open'
+            AND suppression_key = $1
+            AND status = 'sent'
+            AND sent_at IS NOT NULL
+            AND sent_at >= $2
+          ORDER BY sent_at DESC
+          LIMIT 1
+          `,
+          [suppressionKey, suppressionCutoff]
+        );
+
+        if (recentSentRows[0]) {
+          const recentSent = recentSentRows[0];
+          const suppressedUntil = new Date(
+            new Date(recentSent.sent_at).getTime() + safeSuppressionMinutes * 60 * 1000
+          );
+          const suppressedIdempotencyKey = `${idempotencyKey}:suppressed:${Date.now()}:${Math.random().toString(16).slice(2, 10)}`;
+          const { rows: suppressedRows } = await client.query(
+            `
+            INSERT INTO notification_attempts (
+              event_type,
+              idempotency_key,
+              suppression_key,
+              user_id,
+              user_course_id,
+              cart_id,
+              to_email,
+              payload_json,
+              status,
+              attempt_count,
+              max_attempts,
+              next_retry_at,
+              sent_at,
+              suppressed_until,
+              last_error,
+              created_at,
+              updated_at
+            )
+            VALUES (
+              'course_open',
+              $1,
+              $2,
+              $3,
+              $4,
+              $5,
+              $6,
+              $7::jsonb,
+              'suppressed',
+              0,
+              $8,
+              NULL,
+              NULL,
+              $9,
+              $10,
+              NOW(),
+              NOW()
+            )
+            RETURNING *
+            `,
+            [
+              suppressedIdempotencyKey,
+              suppressionKey,
+              userId || null,
+              userCourseId || null,
+              normalizedCartId,
+              normalizedToEmail,
+              payloadJson,
+              safeMaxAttempts,
+              suppressedUntil,
+              `suppressed by sent attempt id=${recentSent.id}`
+            ]
+          );
+
+          await client.query("COMMIT");
+          return {
+            action: "suppressed",
+            attempt: mapNotificationAttemptRow(suppressedRows[0]),
+            suppressionSourceAttemptId: Number(recentSent.id)
+          };
+        }
+      }
+
+      const { rows: existingRows } = await client.query(
         `
-        SELECT id, sent_at
+        SELECT *
         FROM notification_attempts
-        WHERE event_type = 'course_open'
-          AND suppression_key = $1
-          AND status = 'sent'
-          AND sent_at IS NOT NULL
-          AND sent_at >= $2
-        ORDER BY sent_at DESC
+        WHERE idempotency_key = $1
+        FOR UPDATE
         LIMIT 1
         `,
-        [suppressionKey, suppressionCutoff]
+        [idempotencyKey]
       );
+      const existing = mapNotificationAttemptRow(existingRows[0]);
+      if (existing) {
+        if (existing.status === "sent") {
+          await client.query("COMMIT");
+          return { action: "already_sent", attempt: existing };
+        }
 
-      if (recentSentRows[0]) {
-        const recentSent = recentSentRows[0];
-        const suppressedUntil = new Date(
-          new Date(recentSent.sent_at).getTime() + safeSuppressionMinutes * 60 * 1000
-        );
-        const suppressedIdempotencyKey = `${idempotencyKey}:suppressed:${Date.now()}`;
-        const { rows: suppressedRows } = await pool.query(
+        if (existing.status === "pending" || existing.status === "retrying") {
+          await client.query("COMMIT");
+          return { action: "already_queued", attempt: existing };
+        }
+
+        const { rows: resetRows } = await client.query(
           `
-          INSERT INTO notification_attempts (
-            event_type,
-            idempotency_key,
-            suppression_key,
-            user_id,
-            user_course_id,
-            cart_id,
-            to_email,
-            payload_json,
-            status,
-            attempt_count,
-            max_attempts,
-            next_retry_at,
-            sent_at,
-            suppressed_until,
-            last_error,
-            created_at,
-            updated_at
-          )
-          VALUES (
-            'course_open',
-            $1,
-            $2,
-            $3,
-            $4,
-            $5,
-            $6,
-            $7::jsonb,
-            'suppressed',
-            0,
-            $8,
-            NULL,
-            NULL,
-            $9,
-            $10,
-            NOW(),
-            NOW()
-          )
+          UPDATE notification_attempts
+          SET
+            suppression_key = $2,
+            user_id = $3,
+            user_course_id = $4,
+            cart_id = $5,
+            to_email = $6,
+            payload_json = $7::jsonb,
+            status = 'pending',
+            attempt_count = 0,
+            max_attempts = $8,
+            next_retry_at = NOW(),
+            last_attempted_at = NULL,
+            sent_at = NULL,
+            suppressed_until = NULL,
+            provider_message_id = NULL,
+            last_error = NULL,
+            updated_at = NOW()
+          WHERE id = $1
           RETURNING *
           `,
           [
-            suppressedIdempotencyKey,
+            existing.id,
             suppressionKey,
             userId || null,
             userCourseId || null,
             normalizedCartId,
             normalizedToEmail,
-            JSON.stringify(payload),
-            safeMaxAttempts,
-            suppressedUntil,
-            `suppressed by sent attempt id=${recentSent.id}`
+            payloadJson,
+            safeMaxAttempts
           ]
         );
 
-        return {
-          action: "suppressed",
-          attempt: mapNotificationAttemptRow(suppressedRows[0]),
-          suppressionSourceAttemptId: Number(recentSent.id)
-        };
-      }
-    }
-
-    const { rows: existingRows } = await pool.query(
-      `
-      SELECT *
-      FROM notification_attempts
-      WHERE idempotency_key = $1
-      LIMIT 1
-      `,
-      [idempotencyKey]
-    );
-    const existing = mapNotificationAttemptRow(existingRows[0]);
-    if (existing) {
-      if (existing.status === "sent") {
-        return { action: "already_sent", attempt: existing };
+        await client.query("COMMIT");
+        return { action: "requeued", attempt: mapNotificationAttemptRow(resetRows[0]) };
       }
 
-      if (existing.status === "pending" || existing.status === "retrying") {
-        return { action: "already_queued", attempt: existing };
+      const { rows: insertedRows } = await client.query(
+        `
+        INSERT INTO notification_attempts (
+          event_type,
+          idempotency_key,
+          suppression_key,
+          user_id,
+          user_course_id,
+          cart_id,
+          to_email,
+          payload_json,
+          status,
+          attempt_count,
+          max_attempts,
+          next_retry_at,
+          created_at,
+          updated_at
+        )
+        VALUES (
+          'course_open',
+          $1,
+          $2,
+          $3,
+          $4,
+          $5,
+          $6,
+          $7::jsonb,
+          'pending',
+          0,
+          $8,
+          NOW(),
+          NOW(),
+          NOW()
+        )
+        ON CONFLICT (idempotency_key) DO NOTHING
+        RETURNING *
+        `,
+        [
+          idempotencyKey,
+          suppressionKey,
+          userId || null,
+          userCourseId || null,
+          normalizedCartId,
+          normalizedToEmail,
+          payloadJson,
+          safeMaxAttempts
+        ]
+      );
+
+      if (insertedRows[0]) {
+        await client.query("COMMIT");
+        return { action: "queued", attempt: mapNotificationAttemptRow(insertedRows[0]) };
       }
 
-      const { rows: resetRows } = await pool.query(
+      // Another worker inserted this idempotency key in parallel.
+      const { rows: conflictedRows } = await client.query(
+        `
+        SELECT *
+        FROM notification_attempts
+        WHERE idempotency_key = $1
+        FOR UPDATE
+        LIMIT 1
+        `,
+        [idempotencyKey]
+      );
+      const conflicted = mapNotificationAttemptRow(conflictedRows[0]);
+      if (!conflicted) {
+        throw new Error("Failed to resolve notification idempotency conflict.");
+      }
+      if (conflicted.status === "sent") {
+        await client.query("COMMIT");
+        return { action: "already_sent", attempt: conflicted };
+      }
+      if (conflicted.status === "pending" || conflicted.status === "retrying") {
+        await client.query("COMMIT");
+        return { action: "already_queued", attempt: conflicted };
+      }
+
+      const { rows: resetRows } = await client.query(
         `
         UPDATE notification_attempts
         SET
@@ -744,80 +870,52 @@ function createDb({ databaseUrl }) {
         RETURNING *
         `,
         [
-          existing.id,
+          conflicted.id,
           suppressionKey,
           userId || null,
           userCourseId || null,
           normalizedCartId,
           normalizedToEmail,
-          JSON.stringify(payload),
+          payloadJson,
           safeMaxAttempts
         ]
       );
-
+      await client.query("COMMIT");
       return { action: "requeued", attempt: mapNotificationAttemptRow(resetRows[0]) };
+    } catch (error) {
+      try {
+        await client.query("ROLLBACK");
+      } catch (_rollbackError) {
+        // Ignore rollback errors and rethrow the original failure.
+      }
+      throw error;
+    } finally {
+      client.release();
     }
-
-    const { rows: insertedRows } = await pool.query(
-      `
-      INSERT INTO notification_attempts (
-        event_type,
-        idempotency_key,
-        suppression_key,
-        user_id,
-        user_course_id,
-        cart_id,
-        to_email,
-        payload_json,
-        status,
-        attempt_count,
-        max_attempts,
-        next_retry_at,
-        created_at,
-        updated_at
-      )
-      VALUES (
-        'course_open',
-        $1,
-        $2,
-        $3,
-        $4,
-        $5,
-        $6,
-        $7::jsonb,
-        'pending',
-        0,
-        $8,
-        NOW(),
-        NOW(),
-        NOW()
-      )
-      RETURNING *
-      `,
-      [
-        idempotencyKey,
-        suppressionKey,
-        userId || null,
-        userCourseId || null,
-        normalizedCartId,
-        normalizedToEmail,
-        JSON.stringify(payload),
-        safeMaxAttempts
-      ]
-    );
-
-    return { action: "queued", attempt: mapNotificationAttemptRow(insertedRows[0]) };
   }
 
-  async function claimDueNotificationAttempts({ limit = 25 } = {}) {
+  async function claimDueNotificationAttempts({
+    limit = 25,
+    leaseSeconds = 300
+  } = {}) {
     const safeLimit = Math.min(250, parsePositiveInt(limit, 25));
+    const safeLeaseSeconds = Math.min(3600, parsePositiveInt(leaseSeconds, 300));
     const { rows } = await pool.query(
       `
       WITH due AS (
         SELECT id
         FROM notification_attempts
-        WHERE status IN ('pending', 'retrying')
-          AND (next_retry_at IS NULL OR next_retry_at <= NOW())
+        WHERE
+          (
+            status = 'pending'
+            AND (next_retry_at IS NULL OR next_retry_at <= NOW())
+          )
+          OR
+          (
+            status = 'retrying'
+            AND next_retry_at IS NOT NULL
+            AND next_retry_at <= NOW()
+          )
         ORDER BY COALESCE(next_retry_at, created_at) ASC, id ASC
         FOR UPDATE SKIP LOCKED
         LIMIT $1
@@ -826,12 +924,13 @@ function createDb({ databaseUrl }) {
       SET
         status = 'retrying',
         last_attempted_at = NOW(),
+        next_retry_at = NOW() + ($2 * INTERVAL '1 second'),
         updated_at = NOW()
       FROM due
       WHERE na.id = due.id
       RETURNING na.*
       `,
-      [safeLimit]
+      [safeLimit, safeLeaseSeconds]
     );
 
     return rows.map((row) => mapNotificationAttemptRow(row));
