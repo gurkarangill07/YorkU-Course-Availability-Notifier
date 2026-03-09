@@ -83,6 +83,90 @@ async function runDispatchCase({ notifierSendImpl }) {
   return { state, summary };
 }
 
+async function runOpenCourseQueueActionCase(queueAction) {
+  const state = {
+    enqueueArgs: null,
+    stoppedIds: [],
+    claimArgs: null
+  };
+  const nowIso = new Date().toISOString();
+
+  const db = {
+    getSharedSession: async () => ({
+      session_state: "ok",
+      session_expires_at: new Date(Date.now() + 60 * 1000).toISOString()
+    }),
+    getSharedLatestJspFile: async () => null,
+    saveSharedLatestJspFile: async () => {},
+    upsertCourseFromJsp: async () => {},
+    enqueueCourseOpenNotification: async (args) => {
+      state.enqueueArgs = args;
+      return {
+        action: queueAction,
+        attempt: makeAttempt({ status: queueAction === "already_failed" ? "failed" : "suppressed" })
+      };
+    },
+    stopTrackingUserCourse: async (id) => {
+      state.stoppedIds.push(id);
+    },
+    listTrackedCourses: async () => [
+      {
+        user_course_id: 77,
+        user_id: 42,
+        cart_id: "ABC123",
+        email: "test@example.com",
+        created_at: nowIso
+      }
+    ],
+    claimDueNotificationAttempts: async (args) => {
+      state.claimArgs = args;
+      return [];
+    },
+    markNotificationAttemptSent: async () => {
+      throw new Error("markNotificationAttemptSent should not be called");
+    },
+    markNotificationAttemptFailure: async () => {
+      throw new Error("markNotificationAttemptFailure should not be called");
+    },
+    markSharedSessionExpired: async () => ({ wasAlreadyExpired: false })
+  };
+
+  const vsbSource = {
+    collectGetClassDataCandidates: async () => [
+      {
+        fileName: "getClassData.jsp",
+        jspBody: JSON.stringify([{ cartid: "ABC123", os: 2, code: "EECS 1001" }]),
+        sourcePath: null,
+        payloadHash: "hash-1",
+        generatedAt: nowIso
+      }
+    ],
+    pickLatestJspFile: (candidates) => candidates[0]
+  };
+
+  const notifier = {
+    sendCourseOpenEmail: async () => ({ messageId: "provider-mid" }),
+    sendSessionExpiredEmail: async () => {}
+  };
+
+  const summary = await monitorOnce({
+    db,
+    vsbSource,
+    notifier,
+    ownerAlertEmail: null,
+    notificationPolicy: {
+      retryBaseSeconds: 30,
+      retryMaxSeconds: 900,
+      maxAttempts: 5,
+      suppressionWindowMinutes: 30,
+      dispatchBatchSize: 25,
+      dispatchLeaseSeconds: 222
+    }
+  });
+
+  return { state, summary };
+}
+
 test("monitor dispatch marks sent + stores provider message id", async () => {
   const { state, summary } = await runDispatchCase({
     notifierSendImpl: async () => ({ messageId: "provider-mid-1" })
@@ -139,4 +223,32 @@ test("monitor dispatch does not retry permanent auth failures", async () => {
   assert.equal(summary.notified, 0);
   assert.equal(summary.retried, 0);
   assert.equal(summary.failures, 1);
+});
+
+test("monitor treats already_suppressed queue action as suppressed + stops tracking", async () => {
+  const { state, summary } = await runOpenCourseQueueActionCase("already_suppressed");
+
+  assert.equal(state.enqueueArgs.userCourseId, 77);
+  assert.deepEqual(state.stoppedIds, [77]);
+  assert.equal(state.claimArgs.leaseSeconds, 222);
+  assert.equal(summary.scanned, 1);
+  assert.equal(summary.queued, 0);
+  assert.equal(summary.suppressed, 1);
+  assert.equal(summary.stopped, 1);
+  assert.equal(summary.failures, 0);
+  assert.equal(summary.dispatchClaimed, 0);
+});
+
+test("monitor treats already_failed queue action as terminal + stops tracking", async () => {
+  const { state, summary } = await runOpenCourseQueueActionCase("already_failed");
+
+  assert.equal(state.enqueueArgs.userCourseId, 77);
+  assert.deepEqual(state.stoppedIds, [77]);
+  assert.equal(state.claimArgs.leaseSeconds, 222);
+  assert.equal(summary.scanned, 1);
+  assert.equal(summary.queued, 0);
+  assert.equal(summary.suppressed, 0);
+  assert.equal(summary.stopped, 1);
+  assert.equal(summary.failures, 1);
+  assert.equal(summary.dispatchClaimed, 0);
 });

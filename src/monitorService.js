@@ -375,9 +375,19 @@ async function processTrackedCourse({
       suppressionWindowMinutes: notificationPolicy.suppressionWindowMinutes
     });
 
+    if (enqueueResult.action === "already_failed") {
+      await db.stopTrackingUserCourse(target.user_course_id);
+      return {
+        status: "failed_and_stopped",
+        queueAction: enqueueResult.action,
+        os: parsed.os
+      };
+    }
+
     if (
       enqueueResult.action === "suppressed" ||
-      enqueueResult.action === "already_sent"
+      enqueueResult.action === "already_sent" ||
+      enqueueResult.action === "already_suppressed"
     ) {
       await db.stopTrackingUserCourse(target.user_course_id);
       return {
@@ -493,6 +503,9 @@ async function monitorOnce({
       } else if (result.status === "suppressed_and_stopped") {
         summary.suppressed += 1;
         summary.stopped += 1;
+      } else if (result.status === "failed_and_stopped") {
+        summary.failures += 1;
+        summary.stopped += 1;
       }
     } catch (error) {
       summary.failures += 1;
@@ -520,6 +533,9 @@ async function monitorOnce({
                 }
               } else if (retryResult.status === "suppressed_and_stopped") {
                 summary.suppressed += 1;
+                summary.stopped += 1;
+              } else if (retryResult.status === "failed_and_stopped") {
+                summary.failures += 1;
                 summary.stopped += 1;
               }
               continue;
