@@ -7,6 +7,7 @@
   "scripts": {
     "web": "node src/apiServer.js",
     "web:local": "bash scripts/with-env.sh node src/apiServer.js",
+    "db:schema:apply": "node scripts/apply-schema.js",
     "monitor:init-login": "node src/worker.js --init-login",
     "monitor:init-login:local": "bash scripts/with-env.sh node src/worker.js --init-login",
     "monitor:init-login:keep-open": "node src/worker.js --init-login --keep-open",
@@ -15,7 +16,11 @@
     "monitor:once:local": "bash scripts/with-env.sh node src/worker.js --once",
     "monitor:loop": "node src/worker.js",
     "monitor:loop:local": "bash scripts/with-env.sh node src/worker.js",
-    "smoke": "node --check src/*.js"
+    "monitor:health": "node scripts/check-worker-health.js",
+    "monitor:health:local": "bash scripts/with-env.sh node scripts/check-worker-health.js",
+    "smoke": "node --check src/*.js",
+    "test": "node --test test/*.test.js",
+    "ci": "npm run smoke && npm run test"
   },
   "dependencies": {
     "express": "^4.21.2",

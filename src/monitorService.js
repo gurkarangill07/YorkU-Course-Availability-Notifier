@@ -1,4 +1,6 @@
 const { parseCourseFromJsp } = require("./jspParser");
+const { createLogger } = require("./logger");
+const { metrics } = require("./metrics");
 
 const DEFAULT_NOTIFICATION_POLICY = {
   retryBaseSeconds: 30,
@@ -8,6 +10,7 @@ const DEFAULT_NOTIFICATION_POLICY = {
   dispatchBatchSize: 25,
   dispatchLeaseSeconds: 300
 };
+const monitorLogger = createLogger({ component: "monitor" });
 
 function parsePositiveInt(value, fallback) {
   const parsed = Number.parseInt(value, 10);
@@ -197,17 +200,37 @@ async function notifySessionFailureIfNeeded({
   ownerAlertEmail,
   reason
 }) {
+  metrics.increment(
+    "worker_session_failures_total",
+    1,
+    "Total monitor session failure events detected."
+  );
   const { wasAlreadyExpired } = await db.markSharedSessionExpired(reason);
   if (wasAlreadyExpired) {
+    metrics.increment(
+      "worker_session_failure_duplicate_total",
+      1,
+      "Session failure events suppressed because session was already marked expired."
+    );
     return;
   }
   if (!ownerAlertEmail) {
+    metrics.increment(
+      "worker_session_failure_owner_alert_skipped_total",
+      1,
+      "Session failure owner alerts skipped because owner email is not configured."
+    );
     return;
   }
   await notifier.sendSessionExpiredEmail({
     toEmail: ownerAlertEmail,
     reason
   });
+  metrics.increment(
+    "worker_session_failure_owner_alert_sent_total",
+    1,
+    "Session failure owner alerts sent."
+  );
 }
 
 async function dispatchDueNotificationAttempts({
@@ -219,6 +242,11 @@ async function dispatchDueNotificationAttempts({
     limit: notificationPolicy.dispatchBatchSize,
     leaseSeconds: notificationPolicy.dispatchLeaseSeconds
   });
+  metrics.increment(
+    "worker_dispatch_claimed_total",
+    attempts.length,
+    "Notification attempts claimed for dispatch."
+  );
 
   const summary = {
     claimed: attempts.length,
@@ -249,6 +277,11 @@ async function dispatchDueNotificationAttempts({
           sendResult && sendResult.messageId ? String(sendResult.messageId) : null
       });
       summary.sent += 1;
+      metrics.increment(
+        "worker_dispatch_sent_total",
+        1,
+        "Notification attempts marked sent."
+      );
     } catch (error) {
       const transient = isTransientNotificationError(error);
       const nextAttemptCount = attempt.attemptCount + 1;
@@ -277,13 +310,27 @@ async function dispatchDueNotificationAttempts({
 
       if (canRetry) {
         summary.retried += 1;
+        metrics.increment(
+          "worker_dispatch_retried_total",
+          1,
+          "Notification attempts scheduled for retry."
+        );
       } else {
         summary.failed += 1;
+        metrics.increment(
+          "worker_dispatch_failed_total",
+          1,
+          "Notification attempts marked permanently failed."
+        );
       }
 
-      console.error(
-        `[monitor] notification attempt id=${attempt.id} ${canRetry ? "retrying" : "failed"}: ${formattedError}`
-      );
+      monitorLogger.error("notification attempt dispatch failed", {
+        event: "monitor.dispatch.failure",
+        attemptId: attempt.id,
+        nextStatus,
+        canRetry,
+        errorMessage: formattedError
+      });
       continue;
     }
 
@@ -291,9 +338,24 @@ async function dispatchDueNotificationAttempts({
       try {
         await db.markUserCourseNotified(attempt.userCourseId);
         summary.stopped += 1;
+        metrics.increment(
+          "worker_dispatch_stopped_tracking_total",
+          1,
+          "Tracked courses stopped after successful notification dispatch."
+        );
       } catch (stopError) {
         summary.failed += 1;
-        console.error(`[monitor] sent notification attempt id=${attempt.id} but failed to mark user_course_id=${attempt.userCourseId} as notified: ${stopError.message}`);
+        metrics.increment(
+          "worker_dispatch_stop_tracking_failures_total",
+          1,
+          "Failures while stopping tracked courses after successful notification send."
+        );
+        monitorLogger.error("notification sent but stop-tracking failed", {
+          event: "monitor.dispatch.stop_tracking_failure",
+          attemptId: attempt.id,
+          userCourseId: attempt.userCourseId,
+          error: stopError
+        });
       }
     }
   }
@@ -362,6 +424,11 @@ async function processTrackedCourse({
   });
 
   if (parsed.os > 0) {
+    metrics.increment(
+      "worker_open_seat_detected_total",
+      1,
+      "Open-seat detections during monitor scans."
+    );
     const enqueueResult = await db.enqueueCourseOpenNotification({
       userId: target.user_id,
       userCourseId: target.user_course_id,
@@ -372,10 +439,25 @@ async function processTrackedCourse({
       maxAttempts: notificationPolicy.maxAttempts,
       suppressionWindowMinutes: notificationPolicy.suppressionWindowMinutes
     });
+    metrics.increment(
+      `worker_enqueue_action_${enqueueResult.action}_total`,
+      1,
+      "Notification enqueue outcomes by action."
+    );
+
+    if (enqueueResult.action === "already_failed") {
+      await db.stopTrackingUserCourse(target.user_course_id);
+      return {
+        status: "failed_and_stopped",
+        queueAction: enqueueResult.action,
+        os: parsed.os
+      };
+    }
 
     if (
       enqueueResult.action === "suppressed" ||
-      enqueueResult.action === "already_sent"
+      enqueueResult.action === "already_sent" ||
+      enqueueResult.action === "already_suppressed"
     ) {
       await db.markUserCourseNotified(target.user_course_id);
       return {
@@ -402,6 +484,18 @@ async function monitorOnce({
   ownerAlertEmail,
   notificationPolicy
 }) {
+  const runStartedAtMs = Date.now();
+  metrics.increment(
+    "worker_monitor_runs_total",
+    1,
+    "Total monitor loop executions."
+  );
+  metrics.setGauge(
+    "worker_monitor_last_run_started_at_seconds",
+    Math.floor(runStartedAtMs / 1000),
+    "Unix timestamp of the latest monitor run start."
+  );
+
   const policy = normalizeNotificationPolicy(notificationPolicy);
   const summary = {
     scanned: 0,
@@ -422,6 +516,59 @@ async function monitorOnce({
     summary.failures += dispatchSummary.failed;
   }
 
+  function finalizeRun(resultSummary) {
+    const durationMs = Date.now() - runStartedAtMs;
+    metrics.increment(
+      "worker_monitor_scanned_total",
+      resultSummary.scanned,
+      "Total tracked-course scan checks executed by the monitor."
+    );
+    metrics.increment(
+      "worker_monitor_queued_total",
+      resultSummary.queued,
+      "Total queue insertions/requeues from monitor scans."
+    );
+    metrics.increment(
+      "worker_monitor_suppressed_total",
+      resultSummary.suppressed,
+      "Total suppressed notifications encountered during monitor scans."
+    );
+    metrics.increment(
+      "worker_monitor_notified_total",
+      resultSummary.notified,
+      "Total notifications delivered by monitor dispatch."
+    );
+    metrics.increment(
+      "worker_monitor_stopped_total",
+      resultSummary.stopped,
+      "Total tracked courses stopped by monitor flow."
+    );
+    metrics.increment(
+      "worker_monitor_retried_total",
+      resultSummary.retried,
+      "Total notification retries scheduled by monitor dispatch."
+    );
+    metrics.increment(
+      "worker_monitor_failures_total",
+      resultSummary.failures,
+      "Total monitor failures recorded in run summaries."
+    );
+    metrics.observeHistogram("worker_monitor_run_duration_ms", durationMs, {
+      help: "Worker monitor run duration in milliseconds."
+    });
+    metrics.setGauge(
+      "worker_monitor_last_run_duration_ms",
+      durationMs,
+      "Duration of the latest monitor run in milliseconds."
+    );
+    metrics.setGauge(
+      "worker_monitor_last_run_completed_at_seconds",
+      Math.floor(Date.now() / 1000),
+      "Unix timestamp of the latest monitor run completion."
+    );
+    return resultSummary;
+  }
+
   const session = await db.getSharedSession();
   const isClockExpired =
     session &&
@@ -439,16 +586,49 @@ async function monitorOnce({
         });
         if (relogin && relogin.ok) {
           recoveredByAutoRelogin = true;
-          console.log("[monitor] Auto re-login restored session.");
+          metrics.increment(
+            "worker_session_auto_relogin_success_total",
+            1,
+            "Auto re-login attempts that successfully recovered session state."
+          );
+          monitorLogger.info("auto re-login restored session", {
+            event: "monitor.session.auto_relogin.success",
+            reason: isClockExpired
+              ? "session_clock_expired"
+              : "session_state_not_ok"
+          });
         } else if (relogin && relogin.reason) {
-          console.log(`[monitor] Auto re-login skipped/failed: ${relogin.reason}`);
+          metrics.increment(
+            "worker_session_auto_relogin_failure_total",
+            1,
+            "Auto re-login attempts that did not recover session state."
+          );
+          monitorLogger.warn("auto re-login skipped or failed", {
+            event: "monitor.session.auto_relogin.skipped_or_failed",
+            reason: relogin.reason
+          });
         }
       } catch (error) {
-        console.log(`[monitor] Auto re-login error: ${error.message}`);
+        metrics.increment(
+          "worker_session_auto_relogin_failure_total",
+          1,
+          "Auto re-login attempts that errored."
+        );
+        monitorLogger.warn("auto re-login errored", {
+          event: "monitor.session.auto_relogin.error",
+          error
+        });
       }
     }
 
     if (!recoveredByAutoRelogin) {
+      if (isClockExpired) {
+        metrics.increment(
+          "worker_session_expired_loop_total",
+          1,
+          "Monitor loops that detected expired session timestamp."
+        );
+      }
       await notifySessionFailureIfNeeded({
         db,
         notifier,
@@ -467,9 +647,12 @@ async function monitorOnce({
         applyDispatchSummary(dispatchSummary);
       } catch (dispatchError) {
         summary.failures += 1;
-        console.error(`[monitor] notification dispatch failed: ${dispatchError.message}`);
+        monitorLogger.error("notification dispatch failed", {
+          event: "monitor.dispatch.batch_failure",
+          error: dispatchError
+        });
       }
-      return summary;
+      return finalizeRun(summary);
     }
   }
 
@@ -491,6 +674,9 @@ async function monitorOnce({
       } else if (result.status === "suppressed_and_notified") {
         summary.suppressed += 1;
         summary.stopped += 1;
+      } else if (result.status === "failed_and_stopped") {
+        summary.failures += 1;
+        summary.stopped += 1;
       }
     } catch (error) {
       summary.failures += 1;
@@ -501,7 +687,16 @@ async function monitorOnce({
               reason: "mid_scan_session_failure"
             });
             if (relogin && relogin.ok) {
-              console.log("[monitor] Auto re-login succeeded after mid-scan session failure.");
+              metrics.increment(
+                "worker_session_auto_relogin_success_total",
+                1,
+                "Auto re-login recoveries after mid-scan failures."
+              );
+              monitorLogger.info("auto re-login succeeded after mid-scan failure", {
+                event: "monitor.session.auto_relogin.success_mid_scan",
+                userCourseId: target.user_course_id,
+                cartId: target.cart_id
+              });
               const retryResult = await processTrackedCourse({
                 target,
                 db,
@@ -519,11 +714,22 @@ async function monitorOnce({
               } else if (retryResult.status === "suppressed_and_notified") {
                 summary.suppressed += 1;
                 summary.stopped += 1;
+              } else if (retryResult.status === "failed_and_stopped") {
+                summary.failures += 1;
+                summary.stopped += 1;
               }
               continue;
             }
           } catch (reloginError) {
-            console.log(`[monitor] Auto re-login after mid-scan failure errored: ${reloginError.message}`);
+            metrics.increment(
+              "worker_session_auto_relogin_failure_total",
+              1,
+              "Auto re-login retries that errored after mid-scan failures."
+            );
+            monitorLogger.warn("auto re-login after mid-scan failure errored", {
+              event: "monitor.session.auto_relogin.error_mid_scan",
+              error: reloginError
+            });
           }
         }
 
@@ -535,9 +741,12 @@ async function monitorOnce({
         });
         break;
       }
-      console.error(
-        `[monitor] failed for user_course_id=${target.user_course_id} cart_id=${target.cart_id}: ${error.message}`
-      );
+      monitorLogger.error("tracked course processing failed", {
+        event: "monitor.scan.course_failure",
+        userCourseId: target.user_course_id,
+        cartId: target.cart_id,
+        error
+      });
     }
   }
 
@@ -550,10 +759,13 @@ async function monitorOnce({
     applyDispatchSummary(dispatchSummary);
   } catch (dispatchError) {
     summary.failures += 1;
-    console.error(`[monitor] notification dispatch failed: ${dispatchError.message}`);
+    monitorLogger.error("notification dispatch failed", {
+      event: "monitor.dispatch.batch_failure",
+      error: dispatchError
+    });
   }
 
-  return summary;
+  return finalizeRun(summary);
 }
 
 async function runImmediateCheckForNewCourse({
@@ -605,6 +817,11 @@ async function runImmediateCheckForNewCourse({
             reason: "immediate_check_session_failure"
           });
           if (relogin && relogin.ok) {
+            metrics.increment(
+              "worker_session_auto_relogin_success_total",
+              1,
+              "Auto re-login recoveries during immediate checks."
+            );
             const retryResult = await processTrackedCourse({
               target,
               db,
@@ -630,7 +847,15 @@ async function runImmediateCheckForNewCourse({
             };
           }
         } catch (reloginError) {
-          console.log(`[monitor] Auto re-login during immediate check failed: ${reloginError.message}`);
+          metrics.increment(
+            "worker_session_auto_relogin_failure_total",
+            1,
+            "Auto re-login retries that errored during immediate checks."
+          );
+          monitorLogger.warn("auto re-login during immediate check failed", {
+            event: "monitor.session.auto_relogin.error_immediate_check",
+            error: reloginError
+          });
         }
       }
 
