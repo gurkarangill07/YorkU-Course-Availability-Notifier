@@ -11,9 +11,9 @@ const DEFAULT_NOTIFICATION_POLICY = {
   dispatchLeaseSeconds: 300
 };
 const monitorLogger = createLogger({ component: "monitor" });
-const INVALID_CODE_MAX_ATTEMPTS = Number.parseInt(
-  process.env.INVALID_CODE_MAX_ATTEMPTS || "2",
-  10
+const INVALID_CODE_MAX_ATTEMPTS = parsePositiveInt(
+  process.env.INVALID_CODE_MAX_ATTEMPTS,
+  2
 );
 
 function parsePositiveInt(value, fallback) {
