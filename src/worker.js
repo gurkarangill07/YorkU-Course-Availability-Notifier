@@ -2,13 +2,65 @@ const { loadConfig } = require("./config");
 const { createDb } = require("./db");
 const notifier = require("./notification");
 const { createVsbSource } = require("./vsbSource");
+const { createLogger } = require("./logger");
+const { metrics } = require("./metrics");
+const {
+  resolveWorkerHealthPath,
+  writeWorkerHealthSnapshot
+} = require("./workerHealth");
 const {
   monitorOnce,
   runImmediateCheckForNewCourse
 } = require("./monitorService");
 
+const workerLogger = createLogger({ component: "worker" });
+const workerHealthPath = resolveWorkerHealthPath(process.env);
+
 function sleep(ms) {
   return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+function toErrorPayload(error) {
+  if (!error) {
+    return null;
+  }
+  return {
+    name: error.name || "Error",
+    message: error.message || String(error),
+    code: error.code || null,
+    stack: error.stack || null
+  };
+}
+
+async function safeWriteWorkerHealth(snapshot) {
+  try {
+    await writeWorkerHealthSnapshot(
+      {
+        lastHeartbeatAt: new Date().toISOString(),
+        ...snapshot
+      },
+      { healthPath: workerHealthPath }
+    );
+  } catch (error) {
+    workerLogger.warn("failed to write worker heartbeat", {
+      event: "worker.health.write_failed",
+      healthPath: workerHealthPath,
+      error
+    });
+  }
+}
+
+function resolveRunMode(args) {
+  if (args.initLogin) {
+    return args.keepOpen ? "init_login_keep_open" : "init_login";
+  }
+  if (args.checkNewCourse) {
+    return "check_new_course";
+  }
+  if (args.once) {
+    return "once";
+  }
+  return "loop";
 }
 
 function waitForTerminationSignal() {
@@ -21,7 +73,10 @@ function waitForTerminationSignal() {
       settled = true;
       process.off("SIGINT", onSignal);
       process.off("SIGTERM", onSignal);
-      console.log(`[worker] Received ${signal}; shutting down.`);
+      workerLogger.info("received shutdown signal", {
+        event: "worker.signal.received",
+        signal
+      });
       resolve();
     };
     process.on("SIGINT", onSignal);
@@ -72,6 +127,12 @@ function parseCliArgs(argv) {
 }
 
 async function run() {
+  metrics.increment(
+    "worker_process_starts_total",
+    1,
+    "Total worker process starts."
+  );
+  const startedAt = new Date().toISOString();
   const config = loadConfig();
   const db = createDb({ databaseUrl: config.databaseUrl });
   await db.ensureCompatibility();
@@ -85,15 +146,42 @@ async function run() {
     dispatchLeaseSeconds: config.notificationDispatchLeaseSeconds
   };
   const args = parseCliArgs(process.argv.slice(2));
+  const mode = resolveRunMode(args);
+
+  await safeWriteWorkerHealth({
+    state: "starting",
+    mode,
+    startedAt,
+    metrics: metrics.snapshot()
+  });
 
   try {
     if (args.initLogin) {
       const result = await vsbSource.initLoginSession();
-      console.log(`[worker] init-login result=${JSON.stringify(result)}`);
+      workerLogger.info("init-login completed", {
+        event: "worker.init_login.completed",
+        mode,
+        result
+      });
+      await safeWriteWorkerHealth({
+        state: "running",
+        mode,
+        startedAt,
+        lastInitLoginResult: result,
+        metrics: metrics.snapshot()
+      });
       if (args.keepOpen) {
-        console.log("[worker] Keeping browser window open. Press Ctrl+C to close.");
+        workerLogger.info("waiting for termination signal while keeping browser open", {
+          event: "worker.init_login.keep_open_wait"
+        });
         await waitForTerminationSignal();
       }
+      await safeWriteWorkerHealth({
+        state: "idle",
+        mode,
+        startedAt,
+        metrics: metrics.snapshot()
+      });
       return;
     }
 
@@ -107,11 +195,30 @@ async function run() {
         userId: args.checkNewCourse.userId,
         cartId: args.checkNewCourse.cartId
       });
-      console.log(`[worker] immediate-check result=${JSON.stringify(result)}`);
+      metrics.increment(
+        "worker_immediate_checks_total",
+        1,
+        "Total worker immediate check executions."
+      );
+      workerLogger.info("immediate check completed", {
+        event: "worker.immediate_check.completed",
+        mode,
+        userId: args.checkNewCourse.userId,
+        cartId: args.checkNewCourse.cartId,
+        result
+      });
+      await safeWriteWorkerHealth({
+        state: "idle",
+        mode,
+        startedAt,
+        lastImmediateCheckResult: result,
+        metrics: metrics.snapshot()
+      });
       return;
     }
 
     if (args.once) {
+      const runStartedAtMs = Date.now();
       const summary = await monitorOnce({
         db,
         vsbSource,
@@ -119,11 +226,27 @@ async function run() {
         ownerAlertEmail: config.ownerAlertEmail,
         notificationPolicy
       });
-      console.log(`[worker] once summary=${JSON.stringify(summary)}`);
+      const durationMs = Date.now() - runStartedAtMs;
+      workerLogger.info("single monitor pass completed", {
+        event: "worker.once.completed",
+        mode,
+        durationMs,
+        summary
+      });
+      await safeWriteWorkerHealth({
+        state: "idle",
+        mode,
+        startedAt,
+        lastMonitorRunAt: new Date().toISOString(),
+        lastMonitorDurationMs: durationMs,
+        lastMonitorSummary: summary,
+        metrics: metrics.snapshot()
+      });
       return;
     }
 
     while (true) {
+      const runStartedAtMs = Date.now();
       const summary = await monitorOnce({
         db,
         vsbSource,
@@ -131,7 +254,22 @@ async function run() {
         ownerAlertEmail: config.ownerAlertEmail,
         notificationPolicy
       });
-      console.log(`[worker] loop summary=${JSON.stringify(summary)}`);
+      const durationMs = Date.now() - runStartedAtMs;
+      workerLogger.info("monitor loop pass completed", {
+        event: "worker.loop.summary",
+        mode,
+        durationMs,
+        summary
+      });
+      await safeWriteWorkerHealth({
+        state: "running",
+        mode,
+        startedAt,
+        lastMonitorRunAt: new Date().toISOString(),
+        lastMonitorDurationMs: durationMs,
+        lastMonitorSummary: summary,
+        metrics: metrics.snapshot()
+      });
       await sleep(config.monitorIntervalSeconds * 1000);
     }
   } finally {
@@ -139,10 +277,31 @@ async function run() {
       await vsbSource.close();
     }
     await db.close();
+    await safeWriteWorkerHealth({
+      state: "stopped",
+      mode,
+      startedAt,
+      stoppedAt: new Date().toISOString(),
+      metrics: metrics.snapshot()
+    });
   }
 }
 
-run().catch((error) => {
-  console.error(`[worker] fatal: ${error.message}`);
+run().catch(async (error) => {
+  metrics.increment(
+    "worker_process_fatal_total",
+    1,
+    "Total worker process fatal crashes."
+  );
+  workerLogger.error("worker fatal error", {
+    event: "worker.fatal",
+    error
+  });
+  await safeWriteWorkerHealth({
+    state: "fatal",
+    fatalAt: new Date().toISOString(),
+    lastError: toErrorPayload(error),
+    metrics: metrics.snapshot()
+  });
   process.exit(1);
 });

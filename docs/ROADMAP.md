@@ -87,11 +87,21 @@ Exit criteria:
 
 Goal: make runtime behavior visible and recoverable.
 
-- Add structured logging for API and worker.
-- Add metrics for scan counts, failures, notifications, and latencies.
-- Add alerts for repeated worker crashes/session-expired loops.
-- Add runbooks for VSB session recovery, provider outage, and DB connectivity failure.
-- Add worker health checks for supervisor/launchd workflows.
+Delivered so far:
+
+- Structured logs are implemented across API, worker, monitor, notification, and VSB source modules.
+- API exposes Prometheus-style metrics at `/api/metrics` (optional bearer auth).
+- Worker heartbeat snapshots and health evaluation are implemented:
+  - `/api/worker-health`
+  - `npm run monitor:health`
+- Initial operations runbook is documented (`docs/RUNBOOK.md`).
+
+Remaining:
+
+- Extend metrics export strategy for worker-only counters into centralized scrape pipelines.
+- Wire concrete alert automation (for example, cron/monitor jobs) for crash loops/session-expired loops.
+- Add supervisor/launchd-specific health checks and restart policies tied to alert thresholds.
+- Expand runbook automation scripts for common remediation tasks.
 
 Exit criteria:
 - Operators can detect, diagnose, and recover common failures quickly.

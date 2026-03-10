@@ -1,5 +1,9 @@
 const crypto = require("crypto");
 const nodemailer = require("nodemailer");
+const { createLogger } = require("./logger");
+const { metrics } = require("./metrics");
+
+const notificationLogger = createLogger({ component: "notification" });
 
 function parseBoolean(value, fallback) {
   if (value === undefined || value === null || value === "") {
@@ -89,25 +93,49 @@ async function sendMail({ toEmail, subject, text, html, passEnvName = "SMTP_PASS
     throw new Error("Recipient email is required.");
   }
   const { config, transporter } = getTransporter({ passEnvName });
-  const info = await transporter.sendMail({
-    from: config.from,
-    to: toEmail,
-    subject,
-    text,
-    html
-  });
-  console.log(
-    JSON.stringify({
-      event: "EMAIL_SENT",
+  const startedAtMs = Date.now();
+  try {
+    const info = await transporter.sendMail({
+      from: config.from,
+      to: toEmail,
+      subject,
+      text,
+      html
+    });
+    const durationMs = Date.now() - startedAtMs;
+    metrics.increment(
+      "notification_emails_sent_total",
+      1,
+      "Total SMTP emails sent successfully."
+    );
+    metrics.observeHistogram("notification_email_send_duration_ms", durationMs, {
+      help: "SMTP send duration in milliseconds."
+    });
+    notificationLogger.info("email sent", {
+      event: "notification.email.sent",
       toEmail,
       subject,
-      messageId: info.messageId,
-      timestamp: new Date().toISOString()
-    })
-  );
-  return {
-    messageId: info && info.messageId ? String(info.messageId) : null
-  };
+      messageId: info && info.messageId ? String(info.messageId) : null,
+      durationMs
+    });
+    return {
+      messageId: info && info.messageId ? String(info.messageId) : null
+    };
+  } catch (error) {
+    metrics.increment(
+      "notification_email_send_failures_total",
+      1,
+      "Total SMTP email send failures."
+    );
+    notificationLogger.error("email send failed", {
+      event: "notification.email.failed",
+      toEmail,
+      subject,
+      passEnvName,
+      error
+    });
+    throw error;
+  }
 }
 
 async function sendCourseOpenEmail({ toEmail, cartId, courseName, os }) {

@@ -81,6 +81,9 @@ Last updated: March 9, 2026
   - `scripts/start-monitor-supervisor.sh`
   - `scripts/stop-monitor-supervisor.sh`
   - `scripts/monitor-supervisor.sh`
+- Worker health check script:
+  - `npm run monitor:health`
+  - `scripts/check-worker-health.js`
 - macOS launchd management:
   - `scripts/install-monitor-launchd.sh`
   - `scripts/uninstall-monitor-launchd.sh`
@@ -102,6 +105,14 @@ Last updated: March 9, 2026
 - CI workflow exists at `.github/workflows/ci.yml`
 - CI applies DB schema and runs smoke + tests on pull requests and pushes to `main`
 
+9. Observability
+- Structured logging utility exists in `src/logger.js`
+- Metrics registry exists in `src/metrics.js`
+- API metrics endpoint exists: `GET /api/metrics` (optional bearer token)
+- Worker heartbeat + health evaluator exists in `src/workerHealth.js`
+- Worker health API endpoint exists: `GET /api/worker-health` (optional bearer token)
+- Runbook exists at `docs/RUNBOOK.md`
+
 ## 3) What is not done yet
 
 1. Notification observability UX
@@ -118,7 +129,8 @@ Last updated: March 9, 2026
 - Coverage is still incomplete for browser automation/session-recovery branches
 
 4. Production observability
-- No formal metrics, alerting, or full runbooks yet
+- Baseline structured logs, metrics, and runbook are implemented
+- Remaining work: centralized alert automation and deeper dashboarding
 
 ## 4) Current runbook
 
