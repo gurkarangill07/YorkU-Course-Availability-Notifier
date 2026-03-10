@@ -50,7 +50,7 @@ function normalizeCartId(value) {
   if (!cartId) {
     return null;
   }
-  if (!/^[A-Z]{6}$/.test(cartId)) {
+  if (!/^[A-Z0-9]{6}$/.test(cartId)) {
     return null;
   }
   return cartId;
@@ -508,7 +508,7 @@ function createApiApp({
       const courseName = normalizeCourseName(req.body && req.body.courseName);
       if (!cartId) {
         return res.status(400).json({
-          error: "cartId must be exactly 6 uppercase letters."
+          error: "cartId must be exactly 6 characters (A-Z, 0-9)."
         });
       }
 

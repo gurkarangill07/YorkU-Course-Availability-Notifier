@@ -182,7 +182,7 @@
         <!-- Section 2: Add Course -->
         <div class="card">
             <label for="courseCode">2. Track a Course</label>
-            <input type="text" id="courseCode" placeholder="enter the rem enrollment code of your course" maxlength="6" pattern="[A-Z]{6}" autocomplete="off" autocapitalize="characters">
+            <input type="text" id="courseCode" placeholder="enter the rem enrollment code of your course" maxlength="6" pattern="[A-Z0-9]{6}" autocomplete="off" autocapitalize="characters">
             <input type="text" id="courseName" placeholder="optional course name (e.g., EECS 1012)">
             <button id="trackBtn" onclick="startTracking()">Start Tracking</button>
         </div>
@@ -254,7 +254,7 @@
         }
 
         function normalizeCourseCodeInput(value) {
-            return String(value || '').toUpperCase().replace(/[^A-Z]/g, '').slice(0, 6);
+            return String(value || '').toUpperCase().replace(/[^A-Z0-9]/g, '').slice(0, 6);
         }
 
         function updateAuthUi() {
@@ -434,7 +434,7 @@
         async function startTracking() {
             const courseInput = document.getElementById('courseCode');
             const courseNameInput = document.getElementById('courseName');
-            const code = courseInput.value.trim().toUpperCase().replace(/[^A-Z]/g, '');
+            const code = courseInput.value.trim().toUpperCase().replace(/[^A-Z0-9]/g, '');
             const customCourseName = courseNameInput.value.trim();
 
             if (!authUser) {
@@ -443,7 +443,7 @@
                 return;
             }
             if (!code || code.length !== 6) {
-                alert("Please enter a valid 6-letter course code (A-Z only).");
+                alert("Please enter a valid 6-character course code (A-Z, 0-9).");
                 courseInput.focus();
                 return;
             }
