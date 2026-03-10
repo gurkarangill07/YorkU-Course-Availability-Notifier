@@ -182,7 +182,7 @@
         <!-- Section 2: Add Course -->
         <div class="card">
             <label for="courseCode">2. Track a Course</label>
-            <input type="text" id="courseCode" placeholder="enter the rem enrollment code of your course">
+            <input type="text" id="courseCode" placeholder="enter the rem enrollment code of your course" maxlength="6" pattern="[A-Z]{6}" autocomplete="off" autocapitalize="characters">
             <input type="text" id="courseName" placeholder="optional course name (e.g., EECS 1012)">
             <button id="trackBtn" onclick="startTracking()">Start Tracking</button>
         </div>
@@ -251,6 +251,10 @@
             document.getElementById('courseCode').disabled = !enabled;
             document.getElementById('courseName').disabled = !enabled;
             document.getElementById('trackBtn').disabled = !enabled;
+        }
+
+        function normalizeCourseCodeInput(value) {
+            return String(value || '').toUpperCase().replace(/[^A-Z]/g, '').slice(0, 6);
         }
 
         function updateAuthUi() {
@@ -430,7 +434,7 @@
         async function startTracking() {
             const courseInput = document.getElementById('courseCode');
             const courseNameInput = document.getElementById('courseName');
-            const code = courseInput.value.trim().toUpperCase();
+            const code = courseInput.value.trim().toUpperCase().replace(/[^A-Z]/g, '');
             const customCourseName = courseNameInput.value.trim();
 
             if (!authUser) {
@@ -438,11 +442,12 @@
                 document.getElementById('email').focus();
                 return;
             }
-            if (!code) {
-                alert("Please enter a course code.");
+            if (!code || code.length !== 6) {
+                alert("Please enter a valid 6-letter course code (A-Z only).");
                 courseInput.focus();
                 return;
             }
+            courseInput.value = code;
 
             try {
                 const payload = {
@@ -548,6 +553,14 @@
 
             renderList();
         }
+
+        const courseCodeInput = document.getElementById('courseCode');
+        courseCodeInput.addEventListener('input', () => {
+            const normalized = normalizeCourseCodeInput(courseCodeInput.value);
+            if (courseCodeInput.value !== normalized) {
+                courseCodeInput.value = normalized;
+            }
+        });
 
         function logoutOnTabClose() {
             if (!AUTO_LOGOUT_ON_TAB_CLOSE || !authUser) {

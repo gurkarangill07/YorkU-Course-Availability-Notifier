@@ -421,15 +421,12 @@ async function processTrackedCourse({
           target.user_course_id
         );
         if (attempts !== null && attempts >= 5) {
-          await db.markUserCourseInvalid(target.user_course_id);
-          if (!target.invalid_notified_at) {
-            await notifier.sendInvalidCourseEmail({
-              toEmail: target.email,
-              cartId: target.cart_id,
-              courseName: target.display_name || target.course_name || target.cart_id
-            });
-            await db.markUserCourseInvalidNotified(target.user_course_id);
-          }
+          await notifier.sendInvalidCourseEmail({
+            toEmail: target.email,
+            cartId: target.cart_id,
+            courseName: target.display_name || target.course_name || target.cart_id
+          });
+          await db.stopTrackingUserCourse(target.user_course_id);
           return {
             status: "invalid_and_stopped",
             queueAction: "invalid",
@@ -448,15 +445,12 @@ async function processTrackedCourse({
           target.user_course_id
         );
         if (attempts !== null && attempts >= 5) {
-          await db.markUserCourseInvalid(target.user_course_id);
-          if (!target.invalid_notified_at) {
-            await notifier.sendInvalidCourseEmail({
-              toEmail: target.email,
-              cartId: target.cart_id,
-              courseName: target.display_name || target.course_name || target.cart_id
-            });
-            await db.markUserCourseInvalidNotified(target.user_course_id);
-          }
+          await notifier.sendInvalidCourseEmail({
+            toEmail: target.email,
+            cartId: target.cart_id,
+            courseName: target.display_name || target.course_name || target.cart_id
+          });
+          await db.stopTrackingUserCourse(target.user_course_id);
           return {
             status: "invalid_and_stopped",
             queueAction: "invalid",
@@ -473,6 +467,7 @@ async function processTrackedCourse({
     courseName: parsed.courseName,
     os: parsed.os
   });
+  await db.resetUserCourseInvalidAttempts(target.user_course_id);
 
   if (parsed.os > 0) {
     metrics.increment(

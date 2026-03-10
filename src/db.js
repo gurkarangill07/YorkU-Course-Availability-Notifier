@@ -8,6 +8,20 @@ function parsePositiveInt(value, fallback) {
   return parsed;
 }
 
+function parseBoolean(value, fallback) {
+  if (value === undefined || value === null || value === "") {
+    return fallback;
+  }
+  const normalized = String(value).trim().toLowerCase();
+  if (["1", "true", "yes", "y", "on"].includes(normalized)) {
+    return true;
+  }
+  if (["0", "false", "no", "n", "off"].includes(normalized)) {
+    return false;
+  }
+  return fallback;
+}
+
 function normalizeCartId(value) {
   return String(value || "").trim().toUpperCase();
 }
@@ -46,8 +60,15 @@ function mapNotificationAttemptRow(row) {
 }
 
 function createDb({ databaseUrl }) {
+  const sslRejectUnauthorized = parseBoolean(
+    process.env.PG_SSL_REJECT_UNAUTHORIZED,
+    true
+  );
   const pool = new Pool({
-    connectionString: databaseUrl
+    connectionString: databaseUrl,
+    ...(sslRejectUnauthorized === false
+      ? { ssl: { rejectUnauthorized: false } }
+      : {})
   });
 
   async function close() {
@@ -553,29 +574,15 @@ function createDb({ databaseUrl }) {
     return rows[0] ? Number(rows[0].invalid_attempts) : null;
   }
 
-  async function markUserCourseInvalid(userCourseId) {
+  async function resetUserCourseInvalidAttempts(userCourseId) {
     const { rowCount } = await pool.query(
       `
       UPDATE user_courses
       SET
-        tracking_status = 'invalid',
-        notified_at = NULL,
+        invalid_attempts = 0,
+        invalid_notified_at = NULL,
         updated_at = NOW()
-      WHERE id = $1
-      `,
-      [userCourseId]
-    );
-    return rowCount;
-  }
-
-  async function markUserCourseInvalidNotified(userCourseId) {
-    const { rowCount } = await pool.query(
-      `
-      UPDATE user_courses
-      SET
-        invalid_notified_at = NOW(),
-        updated_at = NOW()
-      WHERE id = $1
+      WHERE id = $1 AND invalid_attempts > 0
       `,
       [userCourseId]
     );
@@ -1274,8 +1281,7 @@ function createDb({ databaseUrl }) {
     stopTrackingUserCourseForUser,
     markUserCourseNotified,
     incrementUserCourseInvalidAttempts,
-    markUserCourseInvalid,
-    markUserCourseInvalidNotified,
+    resetUserCourseInvalidAttempts,
     resetNotificationStateForUserCourse,
     resumeUserCourseForUser,
     ensureCourseExists,
