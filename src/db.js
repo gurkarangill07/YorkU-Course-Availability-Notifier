@@ -89,6 +89,8 @@ function createDb({ databaseUrl }) {
       ALTER TABLE user_courses
       ADD COLUMN IF NOT EXISTS invalid_notified_at TIMESTAMPTZ;
       ALTER TABLE user_courses
+      ADD COLUMN IF NOT EXISTS updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW();
+      ALTER TABLE user_courses
       DROP CONSTRAINT IF EXISTS user_courses_tracking_status_check;
       ALTER TABLE user_courses
       ADD CONSTRAINT user_courses_tracking_status_check
@@ -551,7 +553,24 @@ function createDb({ databaseUrl }) {
         tracking_status = 'notified',
         notified_at = NOW(),
         invalid_attempts = 0,
-        invalid_notified_at = NULL
+        invalid_notified_at = NULL,
+        updated_at = NOW()
+      WHERE id = $1
+      `,
+      [userCourseId]
+    );
+    return rowCount;
+  }
+
+  async function markUserCourseInvalid(userCourseId) {
+    const { rowCount } = await pool.query(
+      `
+      UPDATE user_courses
+      SET
+        tracking_status = 'invalid',
+        notified_at = NULL,
+        invalid_notified_at = NOW(),
+        updated_at = NOW()
       WHERE id = $1
       `,
       [userCourseId]
@@ -619,7 +638,8 @@ function createDb({ databaseUrl }) {
           tracking_status = 'active',
           notified_at = NULL,
           invalid_attempts = 0,
-          invalid_notified_at = NULL
+          invalid_notified_at = NULL,
+          updated_at = NOW()
         WHERE id = $1 AND user_id = $2
         `,
         [userCourseId, userId]
@@ -1280,6 +1300,7 @@ function createDb({ databaseUrl }) {
     stopTrackingUserCourse,
     stopTrackingUserCourseForUser,
     markUserCourseNotified,
+    markUserCourseInvalid,
     incrementUserCourseInvalidAttempts,
     resetUserCourseInvalidAttempts,
     resetNotificationStateForUserCourse,

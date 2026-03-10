@@ -50,9 +50,6 @@ function normalizeCartId(value) {
   if (!cartId) {
     return null;
   }
-  if (!/^[A-Z0-9]{6}$/.test(cartId)) {
-    return null;
-  }
   return cartId;
 }
 
@@ -507,9 +504,7 @@ function createApiApp({
       const cartId = normalizeCartId(req.body && req.body.cartId);
       const courseName = normalizeCourseName(req.body && req.body.courseName);
       if (!cartId) {
-        return res.status(400).json({
-          error: "cartId must be exactly 6 characters (A-Z, 0-9)."
-        });
+        return res.status(400).json({ error: "cartId is required." });
       }
 
       const userId = req.auth.userId;

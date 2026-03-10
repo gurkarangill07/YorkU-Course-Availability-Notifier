@@ -203,6 +203,67 @@ function isInvalidCourseError(error) {
   return message.includes("could not locate cartid");
 }
 
+async function markUserCourseNotifiedCompat(db, userCourseId) {
+  if (typeof db.markUserCourseNotified === "function") {
+    await db.markUserCourseNotified(userCourseId);
+    return;
+  }
+  if (typeof db.stopTrackingUserCourse === "function") {
+    await db.stopTrackingUserCourse(userCourseId);
+  }
+}
+
+async function markUserCourseInvalidCompat(db, userCourseId) {
+  if (typeof db.markUserCourseInvalid === "function") {
+    await db.markUserCourseInvalid(userCourseId);
+    return;
+  }
+  if (typeof db.stopTrackingUserCourse === "function") {
+    await db.stopTrackingUserCourse(userCourseId);
+  }
+}
+
+async function incrementInvalidAttemptsCompat(db, userCourseId) {
+  if (typeof db.incrementUserCourseInvalidAttempts !== "function") {
+    return null;
+  }
+  return db.incrementUserCourseInvalidAttempts(userCourseId);
+}
+
+async function resetInvalidAttemptsCompat(db, userCourseId) {
+  if (typeof db.resetUserCourseInvalidAttempts !== "function") {
+    return;
+  }
+  await db.resetUserCourseInvalidAttempts(userCourseId);
+}
+
+async function notifyInvalidCourseIfNeeded({
+  notifier,
+  toEmail,
+  cartId,
+  courseName
+}) {
+  if (!notifier || typeof notifier.sendInvalidCourseEmail !== "function") {
+    return false;
+  }
+  try {
+    await notifier.sendInvalidCourseEmail({
+      toEmail,
+      cartId,
+      courseName
+    });
+    return true;
+  } catch (error) {
+    monitorLogger.warn("failed to send invalid-course notification email", {
+      event: "monitor.invalid_course.notification_failed",
+      toEmail,
+      cartId,
+      error
+    });
+    return false;
+  }
+}
+
 async function notifySessionFailureIfNeeded({
   db,
   notifier,
@@ -345,7 +406,7 @@ async function dispatchDueNotificationAttempts({
 
     if (attempt.userCourseId) {
       try {
-        await db.markUserCourseNotified(attempt.userCourseId);
+        await markUserCourseNotifiedCompat(db, attempt.userCourseId);
         summary.stopped += 1;
         metrics.increment(
           "worker_dispatch_stopped_tracking_total",
@@ -422,16 +483,18 @@ async function processTrackedCourse({
   } catch (error) {
     if (shouldForceRefresh) {
       if (isInvalidCourseError(error)) {
-        const attempts = await db.incrementUserCourseInvalidAttempts(
+        const attempts = await incrementInvalidAttemptsCompat(
+          db,
           target.user_course_id
         );
         if (attempts !== null && attempts >= INVALID_CODE_MAX_ATTEMPTS) {
-          await notifier.sendInvalidCourseEmail({
+          await notifyInvalidCourseIfNeeded({
+            notifier,
             toEmail: target.email,
             cartId: target.cart_id,
             courseName: target.display_name || target.course_name || target.cart_id
           });
-          await db.stopTrackingUserCourse(target.user_course_id);
+          await markUserCourseInvalidCompat(db, target.user_course_id);
           return {
             status: "invalid_and_stopped",
             queueAction: "invalid",
@@ -446,16 +509,18 @@ async function processTrackedCourse({
       parsed = parseCourseFromJsp(latestFile.jspBody, target.cart_id);
     } catch (retryError) {
       if (isInvalidCourseError(retryError)) {
-        const attempts = await db.incrementUserCourseInvalidAttempts(
+        const attempts = await incrementInvalidAttemptsCompat(
+          db,
           target.user_course_id
         );
         if (attempts !== null && attempts >= INVALID_CODE_MAX_ATTEMPTS) {
-          await notifier.sendInvalidCourseEmail({
+          await notifyInvalidCourseIfNeeded({
+            notifier,
             toEmail: target.email,
             cartId: target.cart_id,
             courseName: target.display_name || target.course_name || target.cart_id
           });
-          await db.stopTrackingUserCourse(target.user_course_id);
+          await markUserCourseInvalidCompat(db, target.user_course_id);
           return {
             status: "invalid_and_stopped",
             queueAction: "invalid",
@@ -472,7 +537,7 @@ async function processTrackedCourse({
     courseName: parsed.courseName,
     os: parsed.os
   });
-  await db.resetUserCourseInvalidAttempts(target.user_course_id);
+  await resetInvalidAttemptsCompat(db, target.user_course_id);
 
   if (parsed.os > 0) {
     metrics.increment(
@@ -510,7 +575,7 @@ async function processTrackedCourse({
       enqueueResult.action === "already_sent" ||
       enqueueResult.action === "already_suppressed"
     ) {
-      await db.markUserCourseNotified(target.user_course_id);
+      await markUserCourseNotifiedCompat(db, target.user_course_id);
       return {
         status: "suppressed_and_notified",
         queueAction: enqueueResult.action,
