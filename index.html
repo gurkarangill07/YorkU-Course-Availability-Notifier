@@ -116,6 +116,18 @@
             font-size: 0.85rem;
         }
 
+        .resume-btn {
+            background-color: #059669;
+            width: auto;
+            padding: 6px 12px;
+            font-size: 0.85rem;
+        }
+
+        .item-actions {
+            display: flex;
+            gap: 8px;
+        }
+
         .empty-state {
             text-align: center;
             color: #9ca3af;
@@ -170,16 +182,16 @@
         <!-- Section 2: Add Course -->
         <div class="card">
             <label for="courseCode">2. Track a Course</label>
-            <input type="text" id="courseCode" placeholder="enter the rem enrollment code of your course">
+            <input type="text" id="courseCode" placeholder="enter the rem enrollment code of your course" maxlength="6" pattern="[A-Z0-9]{6}" autocomplete="off" autocapitalize="characters">
             <input type="text" id="courseName" placeholder="optional course name (e.g., EECS 1012)">
             <button id="trackBtn" onclick="startTracking()">Start Tracking</button>
         </div>
 
         <!-- Section 3: Tracked Courses List -->
         <div class="card">
-            <label>Currently Tracked Courses</label>
+            <label>Tracked Courses</label>
             <ul id="trackingList" class="course-list">
-                <li class="empty-state">No courses being tracked yet.</li>
+                <li class="empty-state">No tracked courses yet.</li>
             </ul>
         </div>
     </div>
@@ -189,6 +201,10 @@
         let authUser = null;
         let otpCooldownEndTs = 0;
         let otpCooldownIntervalId = null;
+        let trackedCoursesRefreshIntervalId = null;
+        let trackedCoursesRefreshInFlight = false;
+        const TRACKED_COURSES_REFRESH_MS = 10000;
+        const AUTO_LOGOUT_ON_TAB_CLOSE = false;
 
         function escapeHtml(text) {
             const map = {
@@ -237,6 +253,10 @@
             document.getElementById('trackBtn').disabled = !enabled;
         }
 
+        function normalizeCourseCodeInput(value) {
+            return String(value || '').toUpperCase().replace(/[^A-Z0-9]/g, '').slice(0, 6);
+        }
+
         function updateAuthUi() {
             const emailInput = document.getElementById('email');
             const sendOtpBtn = document.getElementById('sendOtpBtn');
@@ -251,6 +271,7 @@
                 logoutBtn.classList.remove('hidden');
                 setCourseActionsEnabled(true);
                 setAuthStatus(`Logged in as ${authUser.email}`);
+                startTrackedCoursesAutoRefresh();
             } else {
                 emailInput.value = '';
                 emailInput.readOnly = false;
@@ -265,7 +286,32 @@
                     setOtpSectionVisible(false);
                 }
                 setAuthStatus('Not signed in.');
+                stopTrackedCoursesAutoRefresh();
             }
+        }
+
+        function stopTrackedCoursesAutoRefresh() {
+            if (trackedCoursesRefreshIntervalId) {
+                clearInterval(trackedCoursesRefreshIntervalId);
+                trackedCoursesRefreshIntervalId = null;
+            }
+        }
+
+        function startTrackedCoursesAutoRefresh() {
+            stopTrackedCoursesAutoRefresh();
+            trackedCoursesRefreshIntervalId = setInterval(async () => {
+                if (!authUser || document.hidden || trackedCoursesRefreshInFlight) {
+                    return;
+                }
+                trackedCoursesRefreshInFlight = true;
+                try {
+                    await loadTrackedCourses();
+                } catch (_) {
+                    // Ignore transient refresh failures and retry on next interval.
+                } finally {
+                    trackedCoursesRefreshInFlight = false;
+                }
+            }, TRACKED_COURSES_REFRESH_MS);
         }
 
         function startOtpCooldown(seconds) {
@@ -388,7 +434,7 @@
         async function startTracking() {
             const courseInput = document.getElementById('courseCode');
             const courseNameInput = document.getElementById('courseName');
-            const code = courseInput.value.trim().toUpperCase();
+            const code = courseInput.value.trim().toUpperCase().replace(/[^A-Z0-9]/g, '');
             const customCourseName = courseNameInput.value.trim();
 
             if (!authUser) {
@@ -396,11 +442,12 @@
                 document.getElementById('email').focus();
                 return;
             }
-            if (!code) {
-                alert("Please enter a course code.");
+            if (!code || code.length !== 6) {
+                alert("Please enter a valid 6-character course code (A-Z, 0-9).");
                 courseInput.focus();
                 return;
             }
+            courseInput.value = code;
 
             try {
                 const payload = {
@@ -414,7 +461,9 @@
                     method: 'POST',
                     body: JSON.stringify(payload)
                 });
-                if (!result.created) {
+                if (!result.created && result.resumed) {
+                    alert("Tracking resumed for this course.");
+                } else if (!result.created) {
                     alert("You are already tracking this course.");
                 }
                 courseInput.value = '';
@@ -440,23 +489,51 @@
             }
         }
 
+        async function resumeTracking(id) {
+            if (!authUser) {
+                return;
+            }
+
+            try {
+                await apiRequest(`/api/tracked-courses/${id}/resume`, {
+                    method: 'POST'
+                });
+                await loadTrackedCourses();
+            } catch (error) {
+                alert(error.message);
+            }
+        }
+
         function renderList() {
             const list = document.getElementById('trackingList');
             list.innerHTML = '';
 
             if (trackedCourses.length === 0) {
-                list.innerHTML = '<li class="empty-state">No courses being tracked yet.</li>';
+                list.innerHTML = '<li class="empty-state">No tracked courses yet.</li>';
                 return;
             }
 
             trackedCourses.forEach(course => {
+                const isNotified = course.trackingStatus === 'notified';
+                const isInvalid = course.trackingStatus === 'invalid';
+                const stateLabel = isInvalid
+                    ? 'Invalid code - verify and track again'
+                    : (isNotified ? 'Notified - awaiting your action' : 'Actively tracking');
                 const li = document.createElement('li');
                 li.className = 'course-item';
+                const actionsHtml = (isNotified || isInvalid)
+                    ? `<div class="item-actions">
+                        <button class="resume-btn" onclick="resumeTracking(${course.id})">Track Again</button>
+                        <button class="stop-btn" onclick="stopTracking(${course.id})">Remove</button>
+                       </div>`
+                    : `<button class="stop-btn" onclick="stopTracking(${course.id})">Stop Tracking</button>`;
+
                 li.innerHTML = `
                     <div class="course-info">
                         <strong>${escapeHtml(course.courseName || course.cartId)}</strong>
+                        <span>${escapeHtml(stateLabel)}</span>
                     </div>
-                    <button class="stop-btn" onclick="stopTracking(${course.id})">Stop Tracking</button>
+                    ${actionsHtml}
                 `;
                 list.appendChild(li);
             });
@@ -476,6 +553,49 @@
 
             renderList();
         }
+
+        const courseCodeInput = document.getElementById('courseCode');
+        courseCodeInput.addEventListener('input', () => {
+            const normalized = normalizeCourseCodeInput(courseCodeInput.value);
+            if (courseCodeInput.value !== normalized) {
+                courseCodeInput.value = normalized;
+            }
+        });
+
+        function logoutOnTabClose() {
+            if (!AUTO_LOGOUT_ON_TAB_CLOSE || !authUser) {
+                return;
+            }
+            try {
+                if (navigator.sendBeacon) {
+                    const payload = new Blob(['{}'], { type: 'application/json' });
+                    navigator.sendBeacon('/api/auth/logout', payload);
+                    return;
+                }
+                fetch('/api/auth/logout', {
+                    method: 'POST',
+                    credentials: 'same-origin',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: '{}',
+                    keepalive: true
+                });
+            } catch (_) {
+                // Best effort only.
+            }
+        }
+
+        document.addEventListener('visibilitychange', async () => {
+            if (!document.hidden && authUser) {
+                try {
+                    await loadTrackedCourses();
+                } catch (_) {
+                    // Ignore focus refresh errors.
+                }
+            }
+        });
+
+        window.addEventListener('pagehide', logoutOnTabClose);
+        window.addEventListener('beforeunload', logoutOnTabClose);
 
         initializePage();
     </script>

@@ -119,6 +119,12 @@ function mapTrackedCourseRow(row) {
     cartId: row.cart_id,
     courseName: row.display_name || row.course_name || row.cart_id,
     os: Number.isFinite(Number(row.os)) ? Number(row.os) : 0,
+    trackingStatus: row.tracking_status || "active",
+    notifiedAt: row.notified_at || null,
+    invalidAttempts: Number.isFinite(Number(row.invalid_attempts))
+      ? Number(row.invalid_attempts)
+      : 0,
+    invalidNotifiedAt: row.invalid_notified_at || null,
     createdAt: row.created_at
   };
 }
@@ -511,14 +517,25 @@ function createApiApp({
             displayName: courseName
           });
         }
+        let resumed = false;
+        if (existing.tracking_status === "notified" || existing.tracking_status === "invalid") {
+          await db.resumeUserCourseForUser({
+            userCourseId: existing.user_course_id,
+            userId
+          });
+          resumed = true;
+        }
         const refreshed = await db.getTrackedCourseByUserAndCart(userId, cartId);
         return res.status(200).json({
           created: false,
+          resumed,
           item: {
             id: refreshed.user_course_id,
             cartId: refreshed.cart_id,
             courseName: refreshed.display_name || refreshed.course_name || refreshed.cart_id,
-            os: Number.isFinite(Number(refreshed.os)) ? Number(refreshed.os) : 0
+            os: Number.isFinite(Number(refreshed.os)) ? Number(refreshed.os) : 0,
+            trackingStatus: refreshed.tracking_status || "active",
+            notifiedAt: refreshed.notified_at || null
           }
         });
       }
@@ -537,9 +554,32 @@ function createApiApp({
           id: tracked.user_course_id,
           cartId: tracked.cart_id,
           courseName: tracked.display_name || tracked.course_name || tracked.cart_id,
-          os: Number.isFinite(Number(tracked.os)) ? Number(tracked.os) : 0
+          os: Number.isFinite(Number(tracked.os)) ? Number(tracked.os) : 0,
+          trackingStatus: tracked.tracking_status || "active",
+          notifiedAt: tracked.notified_at || null
         }
       });
+    } catch (error) {
+      return next(error);
+    }
+  });
+
+  app.post("/api/tracked-courses/:id/resume", requireAuth, async (req, res, next) => {
+    try {
+      const userCourseId = Number.parseInt(req.params.id, 10);
+      if (Number.isNaN(userCourseId) || userCourseId <= 0) {
+        return res.status(400).json({ error: "Valid user course id is required." });
+      }
+
+      const updatedRows = await db.resumeUserCourseForUser({
+        userCourseId,
+        userId: req.auth.userId
+      });
+      if (!updatedRows) {
+        return res.status(404).json({ error: "Tracked course not found." });
+      }
+
+      return res.json({ ok: true });
     } catch (error) {
       return next(error);
     }

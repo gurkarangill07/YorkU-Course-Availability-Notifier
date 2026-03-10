@@ -80,10 +80,17 @@ Minimum required:
 export DATABASE_URL="postgresql://USER:PASSWORD@HOST:PORT/DB_NAME"
 ```
 
+If your Postgres provider requires TLS but uses a self-signed/intermediate cert chain (common with hosted/Supabase setups), optionally set:
+
+```bash
+export PG_SSL_REJECT_UNAUTHORIZED="false"
+```
+
 Common runtime settings:
 
 ```bash
 export PORT="3000"
+export APP_BASE_URL="http://localhost:3000"      # used in notification email links
 export MONITOR_INTERVAL_SECONDS="60"
 export SESSION_DURATION_MINUTES="90"
 export VSB_REFRESH_INTERVAL_MINUTES="15"
@@ -111,6 +118,7 @@ export NOTIFICATION_MAX_ATTEMPTS="5"
 export NOTIFICATION_SUPPRESSION_WINDOW_MINUTES="30"
 export NOTIFICATION_DISPATCH_BATCH_SIZE="25"
 export NOTIFICATION_DISPATCH_LEASE_SECONDS="300"
+export INVALID_CODE_MAX_ATTEMPTS="2"             # after N invalid detections, mark as invalid
 ```
 
 Passwordless auth settings:

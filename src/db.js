@@ -8,6 +8,20 @@ function parsePositiveInt(value, fallback) {
   return parsed;
 }
 
+function parseBoolean(value, fallback) {
+  if (value === undefined || value === null || value === "") {
+    return fallback;
+  }
+  const normalized = String(value).trim().toLowerCase();
+  if (["1", "true", "yes", "y", "on"].includes(normalized)) {
+    return true;
+  }
+  if (["0", "false", "no", "n", "off"].includes(normalized)) {
+    return false;
+  }
+  return fallback;
+}
+
 function normalizeCartId(value) {
   return String(value || "").trim().toUpperCase();
 }
@@ -46,8 +60,15 @@ function mapNotificationAttemptRow(row) {
 }
 
 function createDb({ databaseUrl }) {
+  const sslRejectUnauthorized = parseBoolean(
+    process.env.PG_SSL_REJECT_UNAUTHORIZED,
+    true
+  );
   const pool = new Pool({
-    connectionString: databaseUrl
+    connectionString: databaseUrl,
+    ...(sslRejectUnauthorized === false
+      ? { ssl: { rejectUnauthorized: false } }
+      : {})
   });
 
   async function close() {
@@ -59,6 +80,21 @@ function createDb({ databaseUrl }) {
       `
       ALTER TABLE user_courses
       ADD COLUMN IF NOT EXISTS display_name TEXT;
+      ALTER TABLE user_courses
+      ADD COLUMN IF NOT EXISTS tracking_status TEXT NOT NULL DEFAULT 'active';
+      ALTER TABLE user_courses
+      ADD COLUMN IF NOT EXISTS notified_at TIMESTAMPTZ;
+      ALTER TABLE user_courses
+      ADD COLUMN IF NOT EXISTS invalid_attempts INTEGER NOT NULL DEFAULT 0;
+      ALTER TABLE user_courses
+      ADD COLUMN IF NOT EXISTS invalid_notified_at TIMESTAMPTZ;
+      ALTER TABLE user_courses
+      ADD COLUMN IF NOT EXISTS updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW();
+      ALTER TABLE user_courses
+      DROP CONSTRAINT IF EXISTS user_courses_tracking_status_check;
+      ALTER TABLE user_courses
+      ADD CONSTRAINT user_courses_tracking_status_check
+      CHECK (tracking_status IN ('active', 'notified', 'invalid'));
 
       CREATE TABLE IF NOT EXISTS notification_attempts (
         id BIGSERIAL PRIMARY KEY,
@@ -109,6 +145,8 @@ function createDb({ databaseUrl }) {
         ON notification_attempts(event_type, suppression_key, sent_at DESC);
       CREATE INDEX IF NOT EXISTS idx_notification_attempts_user_course
         ON notification_attempts(user_course_id);
+      CREATE INDEX IF NOT EXISTS idx_user_courses_tracking_status
+        ON user_courses(tracking_status);
       `
     );
 
@@ -239,11 +277,16 @@ function createDb({ databaseUrl }) {
         u.email,
         uc.cart_id,
         uc.display_name,
+        uc.tracking_status,
+        uc.notified_at,
+        uc.invalid_attempts,
+        uc.invalid_notified_at,
         c.course_name,
         c.os
       FROM user_courses uc
       INNER JOIN users u ON u.id = uc.user_id
       LEFT JOIN courses c ON c.cart_id = uc.cart_id
+      WHERE uc.tracking_status = 'active'
       ORDER BY uc.id ASC
       `
     );
@@ -439,6 +482,10 @@ function createDb({ databaseUrl }) {
         u.email,
         uc.cart_id,
         uc.display_name,
+        uc.tracking_status,
+        uc.notified_at,
+        uc.invalid_attempts,
+        uc.invalid_notified_at,
         c.course_name,
         c.os
       FROM user_courses uc
@@ -460,6 +507,10 @@ function createDb({ databaseUrl }) {
         uc.user_id,
         uc.cart_id,
         uc.display_name,
+        uc.tracking_status,
+        uc.notified_at,
+        uc.invalid_attempts,
+        uc.invalid_notified_at,
         uc.created_at,
         c.course_name,
         c.os
@@ -492,6 +543,141 @@ function createDb({ databaseUrl }) {
       [userCourseId, userId]
     );
     return rowCount;
+  }
+
+  async function markUserCourseNotified(userCourseId) {
+    const { rowCount } = await pool.query(
+      `
+      UPDATE user_courses
+      SET
+        tracking_status = 'notified',
+        notified_at = NOW(),
+        invalid_attempts = 0,
+        invalid_notified_at = NULL,
+        updated_at = NOW()
+      WHERE id = $1
+      `,
+      [userCourseId]
+    );
+    return rowCount;
+  }
+
+  async function markUserCourseInvalid(userCourseId) {
+    const { rowCount } = await pool.query(
+      `
+      UPDATE user_courses
+      SET
+        tracking_status = 'invalid',
+        notified_at = NULL,
+        invalid_notified_at = NOW(),
+        updated_at = NOW()
+      WHERE id = $1
+      `,
+      [userCourseId]
+    );
+    return rowCount;
+  }
+
+  async function incrementUserCourseInvalidAttempts(userCourseId) {
+    const { rows } = await pool.query(
+      `
+      UPDATE user_courses
+      SET
+        invalid_attempts = invalid_attempts + 1,
+        updated_at = NOW()
+      WHERE id = $1
+      RETURNING invalid_attempts
+      `,
+      [userCourseId]
+    );
+    return rows[0] ? Number(rows[0].invalid_attempts) : null;
+  }
+
+  async function resetUserCourseInvalidAttempts(userCourseId) {
+    const { rowCount } = await pool.query(
+      `
+      UPDATE user_courses
+      SET
+        invalid_attempts = 0,
+        invalid_notified_at = NULL,
+        updated_at = NOW()
+      WHERE id = $1 AND invalid_attempts > 0
+      `,
+      [userCourseId]
+    );
+    return rowCount;
+  }
+
+  async function resetNotificationStateForUserCourse(userCourseId) {
+    await pool.query(
+      `
+      UPDATE notification_attempts
+      SET
+        idempotency_key = idempotency_key || ':archived:' || id::text || ':' ||
+          FLOOR(EXTRACT(EPOCH FROM NOW()) * 1000)::text,
+        suppression_key = CASE
+          WHEN suppression_key IS NULL THEN NULL
+          ELSE suppression_key || ':archived:' || id::text || ':' ||
+            FLOOR(EXTRACT(EPOCH FROM NOW()) * 1000)::text
+        END,
+        updated_at = NOW()
+      WHERE user_course_id = $1
+      `,
+      [userCourseId]
+    );
+  }
+
+  async function resumeUserCourseForUser({ userCourseId, userId }) {
+    const client = await pool.connect();
+    try {
+      await client.query("BEGIN");
+      const { rowCount } = await client.query(
+        `
+        UPDATE user_courses
+        SET
+          tracking_status = 'active',
+          notified_at = NULL,
+          invalid_attempts = 0,
+          invalid_notified_at = NULL,
+          updated_at = NOW()
+        WHERE id = $1 AND user_id = $2
+        `,
+        [userCourseId, userId]
+      );
+      if (!rowCount) {
+        await client.query("ROLLBACK");
+        return 0;
+      }
+
+      await client.query(
+        `
+        UPDATE notification_attempts
+        SET
+          idempotency_key = idempotency_key || ':archived:' || id::text || ':' ||
+            FLOOR(EXTRACT(EPOCH FROM NOW()) * 1000)::text,
+          suppression_key = CASE
+            WHEN suppression_key IS NULL THEN NULL
+            ELSE suppression_key || ':archived:' || id::text || ':' ||
+              FLOOR(EXTRACT(EPOCH FROM NOW()) * 1000)::text
+          END,
+          updated_at = NOW()
+        WHERE user_course_id = $1
+        `,
+        [userCourseId]
+      );
+
+      await client.query("COMMIT");
+      return rowCount;
+    } catch (error) {
+      try {
+        await client.query("ROLLBACK");
+      } catch (_) {
+        // Ignore rollback errors and rethrow original error.
+      }
+      throw error;
+    } finally {
+      client.release();
+    }
   }
 
   async function upsertCourseFromJsp({ cartId, courseName, os }) {
@@ -1075,9 +1261,13 @@ function createDb({ databaseUrl }) {
         user_id,
         cart_id,
         display_name,
+        tracking_status,
+        notified_at,
+        invalid_attempts,
+        invalid_notified_at,
         created_at
       )
-      VALUES ($1, $2, $3, NOW())
+      VALUES ($1, $2, $3, 'active', NULL, 0, NULL, NOW())
       ON CONFLICT (user_id, cart_id) DO NOTHING
       RETURNING id
       `,
@@ -1109,6 +1299,12 @@ function createDb({ databaseUrl }) {
     getTrackedCourseByUserAndCart,
     stopTrackingUserCourse,
     stopTrackingUserCourseForUser,
+    markUserCourseNotified,
+    markUserCourseInvalid,
+    incrementUserCourseInvalidAttempts,
+    resetUserCourseInvalidAttempts,
+    resetNotificationStateForUserCourse,
+    resumeUserCourseForUser,
     ensureCourseExists,
     setUserCourseDisplayName,
     setCourseDisplayName,

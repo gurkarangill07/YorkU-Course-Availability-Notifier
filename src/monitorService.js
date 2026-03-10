@@ -11,6 +11,10 @@ const DEFAULT_NOTIFICATION_POLICY = {
   dispatchLeaseSeconds: 300
 };
 const monitorLogger = createLogger({ component: "monitor" });
+const INVALID_CODE_MAX_ATTEMPTS = parsePositiveInt(
+  process.env.INVALID_CODE_MAX_ATTEMPTS,
+  2
+);
 
 function parsePositiveInt(value, fallback) {
   const parsed = Number.parseInt(value, 10);
@@ -194,6 +198,72 @@ function computeRetryDelayMs({
   return boundedSeconds * 1000;
 }
 
+function isInvalidCourseError(error) {
+  const message = (error && error.message ? error.message : "").toLowerCase();
+  return message.includes("could not locate cartid");
+}
+
+async function markUserCourseNotifiedCompat(db, userCourseId) {
+  if (typeof db.markUserCourseNotified === "function") {
+    await db.markUserCourseNotified(userCourseId);
+    return;
+  }
+  if (typeof db.stopTrackingUserCourse === "function") {
+    await db.stopTrackingUserCourse(userCourseId);
+  }
+}
+
+async function markUserCourseInvalidCompat(db, userCourseId) {
+  if (typeof db.markUserCourseInvalid === "function") {
+    await db.markUserCourseInvalid(userCourseId);
+    return;
+  }
+  if (typeof db.stopTrackingUserCourse === "function") {
+    await db.stopTrackingUserCourse(userCourseId);
+  }
+}
+
+async function incrementInvalidAttemptsCompat(db, userCourseId) {
+  if (typeof db.incrementUserCourseInvalidAttempts !== "function") {
+    return null;
+  }
+  return db.incrementUserCourseInvalidAttempts(userCourseId);
+}
+
+async function resetInvalidAttemptsCompat(db, userCourseId) {
+  if (typeof db.resetUserCourseInvalidAttempts !== "function") {
+    return;
+  }
+  await db.resetUserCourseInvalidAttempts(userCourseId);
+}
+
+async function notifyInvalidCourseIfNeeded({
+  notifier,
+  toEmail,
+  cartId,
+  courseName
+}) {
+  if (!notifier || typeof notifier.sendInvalidCourseEmail !== "function") {
+    return false;
+  }
+  try {
+    await notifier.sendInvalidCourseEmail({
+      toEmail,
+      cartId,
+      courseName
+    });
+    return true;
+  } catch (error) {
+    monitorLogger.warn("failed to send invalid-course notification email", {
+      event: "monitor.invalid_course.notification_failed",
+      toEmail,
+      cartId,
+      error
+    });
+    return false;
+  }
+}
+
 async function notifySessionFailureIfNeeded({
   db,
   notifier,
@@ -336,7 +406,7 @@ async function dispatchDueNotificationAttempts({
 
     if (attempt.userCourseId) {
       try {
-        await db.stopTrackingUserCourse(attempt.userCourseId);
+        await markUserCourseNotifiedCompat(db, attempt.userCourseId);
         summary.stopped += 1;
         metrics.increment(
           "worker_dispatch_stopped_tracking_total",
@@ -367,6 +437,7 @@ async function processTrackedCourse({
   target,
   db,
   vsbSource,
+  notifier,
   notificationPolicy,
   forceRefresh = false
 }) {
@@ -411,10 +482,54 @@ async function processTrackedCourse({
     parsed = parseCourseFromJsp(latestFile.jspBody, target.cart_id);
   } catch (error) {
     if (shouldForceRefresh) {
+      if (isInvalidCourseError(error)) {
+        const attempts = await incrementInvalidAttemptsCompat(
+          db,
+          target.user_course_id
+        );
+        if (attempts !== null && attempts >= INVALID_CODE_MAX_ATTEMPTS) {
+          await notifyInvalidCourseIfNeeded({
+            notifier,
+            toEmail: target.email,
+            cartId: target.cart_id,
+            courseName: target.display_name || target.course_name || target.cart_id
+          });
+          await markUserCourseInvalidCompat(db, target.user_course_id);
+          return {
+            status: "invalid_and_stopped",
+            queueAction: "invalid",
+            os: 0
+          };
+        }
+      }
       throw error;
     }
     latestFile = await loadLatestFile({ refreshNow: true });
-    parsed = parseCourseFromJsp(latestFile.jspBody, target.cart_id);
+    try {
+      parsed = parseCourseFromJsp(latestFile.jspBody, target.cart_id);
+    } catch (retryError) {
+      if (isInvalidCourseError(retryError)) {
+        const attempts = await incrementInvalidAttemptsCompat(
+          db,
+          target.user_course_id
+        );
+        if (attempts !== null && attempts >= INVALID_CODE_MAX_ATTEMPTS) {
+          await notifyInvalidCourseIfNeeded({
+            notifier,
+            toEmail: target.email,
+            cartId: target.cart_id,
+            courseName: target.display_name || target.course_name || target.cart_id
+          });
+          await markUserCourseInvalidCompat(db, target.user_course_id);
+          return {
+            status: "invalid_and_stopped",
+            queueAction: "invalid",
+            os: 0
+          };
+        }
+      }
+      throw retryError;
+    }
   }
 
   await db.upsertCourseFromJsp({
@@ -422,6 +537,7 @@ async function processTrackedCourse({
     courseName: parsed.courseName,
     os: parsed.os
   });
+  await resetInvalidAttemptsCompat(db, target.user_course_id);
 
   if (parsed.os > 0) {
     metrics.increment(
@@ -459,9 +575,9 @@ async function processTrackedCourse({
       enqueueResult.action === "already_sent" ||
       enqueueResult.action === "already_suppressed"
     ) {
-      await db.stopTrackingUserCourse(target.user_course_id);
+      await markUserCourseNotifiedCompat(db, target.user_course_id);
       return {
-        status: "suppressed_and_stopped",
+        status: "suppressed_and_notified",
         queueAction: enqueueResult.action,
         os: parsed.os
       };
@@ -664,6 +780,7 @@ async function monitorOnce({
         target,
         db,
         vsbSource,
+        notifier,
         notificationPolicy: policy,
         forceRefresh: false
       });
@@ -671,10 +788,10 @@ async function monitorOnce({
         if (result.queueAction === "queued" || result.queueAction === "requeued") {
           summary.queued += 1;
         }
-      } else if (result.status === "suppressed_and_stopped") {
+      } else if (result.status === "suppressed_and_notified") {
         summary.suppressed += 1;
         summary.stopped += 1;
-      } else if (result.status === "failed_and_stopped") {
+      } else if (result.status === "failed_and_stopped" || result.status === "invalid_and_stopped") {
         summary.failures += 1;
         summary.stopped += 1;
       }
@@ -701,6 +818,7 @@ async function monitorOnce({
                 target,
                 db,
                 vsbSource,
+                notifier,
                 notificationPolicy: policy,
                 forceRefresh: true
               });
@@ -711,10 +829,10 @@ async function monitorOnce({
                 ) {
                   summary.queued += 1;
                 }
-              } else if (retryResult.status === "suppressed_and_stopped") {
+              } else if (retryResult.status === "suppressed_and_notified") {
                 summary.suppressed += 1;
                 summary.stopped += 1;
-              } else if (retryResult.status === "failed_and_stopped") {
+              } else if (retryResult.status === "failed_and_stopped" || retryResult.status === "invalid_and_stopped") {
                 summary.failures += 1;
                 summary.stopped += 1;
               }
@@ -788,6 +906,7 @@ async function runImmediateCheckForNewCourse({
       target,
       db,
       vsbSource,
+      notifier,
       notificationPolicy: policy,
       forceRefresh: true
     });
@@ -826,6 +945,7 @@ async function runImmediateCheckForNewCourse({
               target,
               db,
               vsbSource,
+              notifier,
               notificationPolicy: policy,
               forceRefresh: true
             });

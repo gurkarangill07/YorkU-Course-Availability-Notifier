@@ -142,21 +142,60 @@ async function sendCourseOpenEmail({ toEmail, cartId, courseName, os }) {
   const cartIdText = String(cartId || "").trim();
   const courseTitle = String(courseName || cartIdText || "Tracked course").trim();
   const openSeats = Number.isFinite(Number(os)) ? Number(os) : 0;
+  const appUrl = String(process.env.APP_BASE_URL || "http://localhost:3000").trim();
 
   const subject = `Course ${cartIdText || courseTitle} is now open`;
   const text = [
     "Good news!",
     "",
     `${courseTitle} now has ${openSeats} open seat(s).`,
-    `Cart ID: ${cartIdText || "unknown"}`
+    `Cart ID: ${cartIdText || "unknown"}`,
+    "",
+    "After you enroll, open CourseNotif to either:",
+    "- Remove this course from your list",
+    "- Track it again if it becomes full",
+    `Open: ${appUrl}`
   ].join("\n");
   const html = [
     "<p><strong>Good news!</strong></p>",
     `<p>${courseTitle} now has <strong>${openSeats}</strong> open seat(s).</p>`,
-    `<p>Cart ID: <code>${cartIdText || "unknown"}</code></p>`
+    `<p>Cart ID: <code>${cartIdText || "unknown"}</code></p>`,
+    "<p>After you enroll, open CourseNotif to either remove this course or track it again if it fills up.</p>",
+    `<p><a href="${appUrl}">Open CourseNotif</a></p>`
   ].join("");
 
   return sendMail({
+    toEmail,
+    subject,
+    text,
+    html
+  });
+}
+
+async function sendInvalidCourseEmail({ toEmail, cartId, courseName }) {
+  const cartIdText = String(cartId || "").trim();
+  const courseTitle = String(courseName || cartIdText || "Tracked course").trim();
+  const appUrl = String(process.env.APP_BASE_URL || "http://localhost:3000").trim();
+  const subject = `Course code ${cartIdText || courseTitle} looks invalid`;
+  const text = [
+    "We could not find this course code after multiple checks.",
+    "",
+    `Course: ${courseTitle}`,
+    `Cart ID: ${cartIdText || "unknown"}`,
+    "",
+    "Please verify the code and re-add it if needed.",
+    `Open: ${appUrl}`
+  ].join("\n");
+  const html = [
+    "<p><strong>Course code not found.</strong></p>",
+    "<p>We could not find this course code after multiple checks.</p>",
+    `<p>Course: ${courseTitle}</p>`,
+    `<p>Cart ID: <code>${cartIdText || "unknown"}</code></p>`,
+    "<p>Please verify the code and re-add it if needed.</p>",
+    `<p><a href="${appUrl}">Open CourseNotif</a></p>`
+  ].join("");
+
+  await sendMail({
     toEmail,
     subject,
     text,
@@ -218,6 +257,7 @@ async function sendLoginOtpEmail({ toEmail, otpCode, expiresMinutes = 10 }) {
 
 module.exports = {
   sendCourseOpenEmail,
+  sendInvalidCourseEmail,
   sendSessionExpiredEmail,
   sendLoginOtpEmail
 };
