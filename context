@@ -1,6 +1,6 @@
 # CourseNotif Context (Current Snapshot)
 
-Last updated: March 9, 2026
+Last updated: March 10, 2026
 
 ## 1) Project identity
 
@@ -13,36 +13,53 @@ Last updated: March 9, 2026
 
 1. Data model and persistence
 - PostgreSQL schema exists in `db/schema.sql`
-- Core tables: `users`, `courses`, `user_courses`, `shared_latest_jsp_file`, `shared_vsb_session`
-- `user_courses.display_name` is supported for per-user course naming
-- DB layer exists in `src/db.js` with compatibility guard (`ensureCompatibility`)
+- Core tables: `users`, `courses`, `user_courses`, `shared_latest_jsp_file`, `shared_vsb_session`, `notification_attempts`, `auth_otp_challenges`, `auth_sessions`
+- `user_courses` supports:
+  - `display_name`
+  - `tracking_status` (`active` | `notified` | `invalid`)
+  - `notified_at`
+  - `invalid_attempts`
+  - `invalid_notified_at`
+  - `updated_at`
+- DB layer exists in `src/db.js` with compatibility migration guard (`ensureCompatibility`)
+- Resume/retry support is implemented in DB helpers:
+  - `markUserCourseNotified`
+  - `markUserCourseInvalid`
+  - `resumeUserCourseForUser`
+  - `resetNotificationStateForUserCourse`
 
 2. API server
 - Express server in `src/apiServer.js`
 - Implemented endpoints:
   - `GET /api/health`
+  - `GET /api/metrics` (optional bearer auth)
+  - `GET /api/worker-health` (optional bearer auth)
   - `GET /api/auth/me`
   - `POST /api/auth/send-otp`
   - `POST /api/auth/verify-otp`
   - `POST /api/auth/logout`
   - `GET /api/tracked-courses` (auth required)
   - `POST /api/tracked-courses` (auth required)
+  - `POST /api/tracked-courses/:id/resume` (auth required)
   - `DELETE /api/tracked-courses/:id` (auth required)
+- `POST /api/tracked-courses` auto-resumes rows currently in `notified`/`invalid` state
+- Tracked-course responses include status fields (`trackingStatus`, `notifiedAt`, `invalidAttempts`, `invalidNotifiedAt`)
 - Serves `index.html` at `GET /`
 
 3. Frontend
 - Single-page UI in `index.html`
 - Supports:
   - passwordless email OTP sign-in
-  - email input starts blank on unauthenticated load (no localStorage prefill)
-  - signed-in UI shows authenticated user email in the input
   - resend OTP with cooldown
   - logout
-  - adding tracked course by cart ID
+  - adding tracked courses
   - optional custom course name
-  - listing tracked courses from API
-  - stop tracking action
-- Tracked-course actions are enabled only when authenticated
+  - listing tracked courses with status text
+  - stop tracking
+  - resume tracking (`Track Again`) for `notified`/`invalid` states
+  - automatic tracked-course refresh while signed in
+- Course code input is normalized on the client (uppercase alphanumeric, max 6 chars)
+- Auto-logout-on-tab-close hook exists but is disabled by default (`AUTO_LOGOUT_ON_TAB_CLOSE=false`)
 
 4. Monitoring worker
 - Worker CLI in `src/worker.js`
@@ -52,8 +69,16 @@ Last updated: March 9, 2026
   - `--once`
   - default loop mode
   - `--check-new-course <userId> <cartId>`
-- Monitor flow in `src/monitorService.js`
-- Parser in `src/jspParser.js`
+- Monitor flow in `src/monitorService.js` includes:
+  - notification dispatch retry/backoff
+  - session-failure detection with owner alert path
+  - open-seat enqueue flow
+  - course state transitions to `notified` after successful delivery/suppressed terminal outcomes
+  - invalid-code handling:
+    - detects parser “cartid not found” conditions
+    - increments invalid attempts
+    - after threshold (`INVALID_CODE_MAX_ATTEMPTS`), sends invalid-code email (if notifier supports it) and marks course `invalid`
+  - compatibility fallbacks so monitor logic works with both older and newer DB/notifier interfaces
 
 5. VSB source integration and resilience
 - Source modes in `src/vsbSource.js`:
@@ -69,7 +94,17 @@ Last updated: March 9, 2026
   - auto re-login attempts (including fallback flows)
   - automatic browser-context reset/relaunch if Playwright context/page closes unexpectedly
 
-6. Ops scripts and local runners
+6. Notifications
+- Notification module exists in `src/notification.js`
+- SMTP delivery is implemented via `nodemailer`
+- Separate SMTP password override is supported for auth OTP emails (`SMTP_PASS_AUTH`)
+- Added invalid-course notification email (`sendInvalidCourseEmail`)
+- Course-open and invalid-course emails can include app links via `APP_BASE_URL`
+- Delivery attempts are persisted in `notification_attempts`
+- Retry/backoff is implemented for transient send failures
+- Idempotency + suppression window logic are implemented for course-open alerts
+
+7. Ops scripts and local runners
 - `.env.local` loader: `scripts/with-env.sh`
 - Local npm runners:
   - `npm run web:local`
@@ -77,6 +112,7 @@ Last updated: March 9, 2026
   - `npm run monitor:init-login:keep-open:local`
   - `npm run monitor:once:local`
   - `npm run monitor:loop:local`
+  - `npm run monitor:health:local`
 - Supervisor scripts:
   - `scripts/start-monitor-supervisor.sh`
   - `scripts/stop-monitor-supervisor.sh`
@@ -88,22 +124,15 @@ Last updated: March 9, 2026
   - `scripts/install-monitor-launchd.sh`
   - `scripts/uninstall-monitor-launchd.sh`
 
-7. Notifications
-- Notification module exists in `src/notification.js`
-- SMTP delivery is implemented via `nodemailer`
-- Gmail SMTP app-password flow is supported via environment variables
-- Separate SMTP password override is supported for auth OTP emails (`SMTP_PASS_AUTH`)
-- Delivery attempts are persisted in `notification_attempts`
-- Retry/backoff is implemented for transient send failures
-- Idempotency + suppression window logic are implemented for course-open alerts
-
 8. Tests and CI
 - Automated tests exist under `test/`:
   - parser unit tests (`test/jspParser.test.js`)
   - monitor dispatch/retry unit tests (`test/monitorService.test.js`)
   - API auth + tracked-course integration test (`test/api.integration.test.js`)
+  - observability tests (`test/observability.test.js`, `test/logger.test.js`)
 - CI workflow exists at `.github/workflows/ci.yml`
-- CI applies DB schema and runs smoke + tests on pull requests and pushes to `main`
+- CI runs smoke + tests on pull requests and pushes to `main`
+- Current `ahmed/work` branch is green on local CI gate after fixes
 
 9. Observability
 - Structured logging utility exists in `src/logger.js`
@@ -113,24 +142,18 @@ Last updated: March 9, 2026
 - Worker health API endpoint exists: `GET /api/worker-health` (optional bearer token)
 - Runbook exists at `docs/RUNBOOK.md`
 
-## 3) What is not done yet
+## 3) Environment/config notes
 
-1. Notification observability UX
-- Reliability pipeline exists in backend DB + worker flow
-- No dedicated UI/reporting view for notification attempts yet
-
-2. Security and auth
-- Passwordless OTP auth/session model is implemented
-- Ownership for tracked-course CRUD is session-bound (not email query/body based)
-- Remaining work: stronger abuse controls (IP/device rate limiting), session management UX, and deeper auditability
-
-3. Automated testing and CI quality gates
-- Core parser/monitor/API paths have test coverage
-- Coverage is still incomplete for browser automation/session-recovery branches
-
-4. Production observability
-- Baseline structured logs, metrics, and runbook are implemented
-- Remaining work: centralized alert automation and deeper dashboarding
+- `DATABASE_URL` is required
+- `PG_SSL_REJECT_UNAUTHORIZED=false` is supported for hosted Postgres setups that require relaxed TLS verification
+- `APP_BASE_URL` controls links used in email templates
+- `INVALID_CODE_MAX_ATTEMPTS` controls invalid-code threshold before marking a course invalid
+- Observability envs are supported:
+  - `LOG_LEVEL`
+  - `LOG_FORMAT`
+  - `METRICS_BEARER_TOKEN`
+  - `WORKER_HEALTH_PATH`
+  - `WORKER_HEALTH_MAX_STALE_SECONDS`
 
 ## 4) Current runbook
 
@@ -141,7 +164,7 @@ Last updated: March 9, 2026
 2. Configure environment
 - Required: `DATABASE_URL`
 - Browser mode minimum: `VSB_SOURCE_MODE=browser`, `VSB_URL`
-- For local env file workflow: create/update `.env.local`
+- For local workflow: create/update `.env.local` from `.env.example`
 
 3. Apply schema
 - `psql "$DATABASE_URL" -f db/schema.sql`
@@ -169,10 +192,10 @@ Last updated: March 9, 2026
 
 ## 5) Immediate priorities
 
-1. Expand automated test coverage depth (parser fixtures, monitor session branches, API negative cases)
-2. Introduce authentication and identity-bound ownership checks
-3. Add structured logs/metrics and operational alerts/runbooks
-4. Add notification-attempt visibility tooling (UI or admin endpoint)
+1. Expand automated coverage for `invalid`/`notified` state transitions and resume flows
+2. Add browser-mode integration tests for session recovery and invalid-code paths
+3. Improve notification-attempt visibility (UI or admin API)
+4. Add centralized alert routing/dashboard automation on top of current observability baseline
 
 ## 6) Notes for future contributors/agents
 
