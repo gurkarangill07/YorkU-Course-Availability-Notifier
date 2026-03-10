@@ -1,4 +1,77 @@
 const path = require("path");
+const { createLogger } = require("./logger");
+
+const vsbLogger = createLogger({ component: "vsb" });
+
+function normalizeLogValue(value) {
+  if (value instanceof Error) {
+    return {
+      name: value.name || "Error",
+      message: value.message || String(value),
+      code: value.code || null
+    };
+  }
+  if (
+    value === null ||
+    typeof value === "string" ||
+    typeof value === "number" ||
+    typeof value === "boolean"
+  ) {
+    return value;
+  }
+  try {
+    return JSON.parse(JSON.stringify(value));
+  } catch (_error) {
+    return String(value);
+  }
+}
+
+function logWithLevel(level, args) {
+  const parts = Array.isArray(args) ? args : [];
+  if (!parts.length) {
+    return;
+  }
+  const [first, ...rest] = parts;
+  let message = "vsb log";
+
+  if (typeof first === "string" && first.trim()) {
+    message = first;
+  } else if (first instanceof Error) {
+    message = first.message || "vsb error";
+  } else {
+    message = String(first);
+  }
+
+  const errorFromFirst = first instanceof Error ? first : null;
+  const errorFromRest =
+    rest.find((item) => item instanceof Error) || null;
+  const details = rest
+    .filter((item) => !(item instanceof Error))
+    .map((item) => normalizeLogValue(item));
+  const fields = {
+    event: "vsb.log",
+    details: details.length ? details : undefined,
+    error: errorFromFirst || errorFromRest || undefined
+  };
+
+  if (level === "error") {
+    vsbLogger.error(message, fields);
+    return;
+  }
+  if (level === "warn") {
+    vsbLogger.warn(message, fields);
+    return;
+  }
+  vsbLogger.info(message, fields);
+}
+
+function logInfo(...args) {
+  logWithLevel("info", args);
+}
+
+function logError(...args) {
+  logWithLevel("error", args);
+}
 
 function toDate(input) {
   if (!input) {
@@ -193,7 +266,7 @@ function createVsbBrowserSource(db, config) {
       }
     } catch (error) {
       if (allowRecover && isBrowserClosedError(error)) {
-        console.log("[vsb] Browser context/page closed unexpectedly; relaunching browser context.");
+        logInfo("[vsb] Browser context/page closed unexpectedly; relaunching browser context.");
         await resetBrowserState();
         return ensureBrowser({ allowRecover: false });
       }
@@ -351,7 +424,7 @@ function createVsbBrowserSource(db, config) {
       await db.markSharedSessionOk({
         sessionDurationMinutes: config.sessionDurationMinutes
       });
-      console.log("[vsb] Session already active; auto re-login marked session ok.");
+      logInfo("[vsb] Session already active; auto re-login marked session ok.");
       return {
         ok: true,
         reason: "already_active"
@@ -360,7 +433,7 @@ function createVsbBrowserSource(db, config) {
       // Continue with credential-based login flow.
     }
 
-    console.log(`[vsb] Attempting auto re-login (${reason || "unknown_reason"})...`);
+    logInfo(`[vsb] Attempting auto re-login (${reason || "unknown_reason"})...`);
 
     const usernameInput = page.locator(config.vsbLoginUsernameSelector).first();
     const passwordInput = page.locator(config.vsbLoginPasswordSelector).first();
@@ -380,7 +453,7 @@ function createVsbBrowserSource(db, config) {
         await db.markSharedSessionOk({
           sessionDurationMinutes: config.sessionDurationMinutes
         });
-        console.log("[vsb] Session restored without login form; marked session ok.");
+        logInfo("[vsb] Session restored without login form; marked session ok.");
         return {
           ok: true,
           reason: "already_active_no_login_form"
@@ -400,7 +473,7 @@ function createVsbBrowserSource(db, config) {
             });
             hasSyncedTrackedCoursesForContext = false;
             clearCoursePresenceCache();
-            console.log("[vsb] Auto re-login succeeded via continue handoff without login form.");
+            logInfo("[vsb] Auto re-login succeeded via continue handoff without login form.");
             return {
               ok: true,
               reason: "continue_handoff_only"
@@ -442,7 +515,7 @@ function createVsbBrowserSource(db, config) {
       });
       hasSyncedTrackedCoursesForContext = false;
       clearCoursePresenceCache();
-      console.log("[vsb] Auto re-login succeeded via fallback login flow.");
+      logInfo("[vsb] Auto re-login succeeded via fallback login flow.");
       return {
         ok: true,
         reason: "fallback_login"
@@ -493,7 +566,7 @@ function createVsbBrowserSource(db, config) {
     hasSyncedTrackedCoursesForContext = false;
     clearCoursePresenceCache();
 
-    console.log("[vsb] Auto re-login succeeded.");
+    logInfo("[vsb] Auto re-login succeeded.");
     return {
       ok: true
     };
@@ -545,7 +618,7 @@ function createVsbBrowserSource(db, config) {
           generatedAt: new Date()
         });
       } catch (error) {
-        console.error(`[vsb] failed to read response body: ${error.message}`);
+        logError(`[vsb] failed to read response body: ${error.message}`);
       }
     };
 
@@ -558,7 +631,7 @@ function createVsbBrowserSource(db, config) {
     }
     
     if (captured.length === 0) {
-      console.log("[vsb] No JSP response captured. Captured responses:", captured.length);
+      logInfo("[vsb] No JSP response captured. Captured responses:", captured.length);
     }
     
     return captured;
@@ -768,15 +841,15 @@ function createVsbBrowserSource(db, config) {
     );
 
     if (result.status === "unchecked") {
-      console.log(`[vsb] Unchecked course checkbox for ${cartIdText}.`);
+      logInfo(`[vsb] Unchecked course checkbox for ${cartIdText}.`);
       return;
     }
     if (result.status === "already_unchecked") {
-      console.log(`[vsb] Course checkbox already unchecked for ${cartIdText}.`);
+      logInfo(`[vsb] Course checkbox already unchecked for ${cartIdText}.`);
       return;
     }
     if (result.status === "still_checked") {
-      console.log(
+      logInfo(
         `[vsb] Attempted to uncheck checkbox for ${cartIdText}, but it is still checked.`
       );
       return;
@@ -785,13 +858,13 @@ function createVsbBrowserSource(db, config) {
       result.status === "clicked_unknown_state" ||
       result.status === "state_unknown_after_click"
     ) {
-      console.log(
+      logInfo(
         `[vsb] Clicked checkbox for ${cartIdText}, but could not reliably read post-click state.`
       );
       return;
     }
 
-    console.log(
+    logInfo(
       `[vsb] Could not locate a unique checkbox for ${cartIdText} (rows=${result.rowMatches || 0}, candidates=${result.candidateCount || 0}, globallyChecked=${result.globalCheckedCount || 0}).`
     );
   }
@@ -800,14 +873,14 @@ function createVsbBrowserSource(db, config) {
     const searchInput = page.locator(config.vsbSearchSelector).first();
     const cartIdText = String(cartId).trim();
 
-    console.log(`[vsb] Searching for course: ${cartIdText}`);
+    logInfo(`[vsb] Searching for course: ${cartIdText}`);
     
     await searchInput.click({ timeout: config.vsbSearchTimeoutMs });
     await searchInput.fill("");
     await searchInput.fill(cartIdText);
     await page.waitForTimeout(500);
 
-    console.log(`[vsb] Course code entered. Waiting for dropdown...`);
+    logInfo(`[vsb] Course code entered. Waiting for dropdown...`);
     
     const options = page.locator(config.vsbDropdownOptionSelector);
     try {
@@ -817,14 +890,14 @@ function createVsbBrowserSource(db, config) {
 
       const matchingOption = options.filter({ hasText: cartIdText }).first();
       if ((await matchingOption.count()) > 0) {
-        console.log(`[vsb] Found matching option, clicking...`);
+        logInfo(`[vsb] Found matching option, clicking...`);
         await matchingOption.click();
       } else {
-        console.log(`[vsb] No exact match, clicking first option...`);
+        logInfo(`[vsb] No exact match, clicking first option...`);
         await options.first().click();
       }
     } catch (_) {
-      console.log(`[vsb] No dropdown found, pressing Enter...`);
+      logInfo(`[vsb] No dropdown found, pressing Enter...`);
       await searchInput.press("Enter");
     }
 
@@ -833,7 +906,7 @@ function createVsbBrowserSource(db, config) {
       try {
         await uncheckCourseCheckbox(cartIdText);
       } catch (error) {
-        console.log(`[vsb] Warning: failed to uncheck checkbox for ${cartIdText}: ${error.message}`);
+        logInfo(`[vsb] Warning: failed to uncheck checkbox for ${cartIdText}: ${error.message}`);
       }
     }
   }
@@ -842,16 +915,16 @@ function createVsbBrowserSource(db, config) {
     await searchAndSelectCourse(cartId, { applyUncheck: true });
 
     await page.waitForTimeout(1000);
-    console.log(`[vsb] Reloading page to capture JSP response...`);
+    logInfo(`[vsb] Reloading page to capture JSP response...`);
     await page.reload({ waitUntil: "load" });
   }
 
   async function refreshOnlyForCapture(cartId) {
     const cartIdText = String(cartId || "").trim();
     if (cartIdText) {
-      console.log(`[vsb] ${cartIdText} already present; refreshing page for JSP capture...`);
+      logInfo(`[vsb] ${cartIdText} already present; refreshing page for JSP capture...`);
     } else {
-      console.log("[vsb] Refreshing page for JSP capture...");
+      logInfo("[vsb] Refreshing page for JSP capture...");
     }
     await page.reload({ waitUntil: "load" });
   }
@@ -951,7 +1024,7 @@ function createVsbBrowserSource(db, config) {
     }
 
     let allSynced = true;
-    console.log(`[vsb] Syncing ${uniqueCartIds.length} tracked course(s) into VSB page...`);
+    logInfo(`[vsb] Syncing ${uniqueCartIds.length} tracked course(s) into VSB page...`);
     for (const cartId of uniqueCartIds) {
       try {
         const exists = await isCoursePresentInWindow(cartId);
@@ -959,7 +1032,7 @@ function createVsbBrowserSource(db, config) {
           setCoursePresenceCache(cartId, true, "sync_precheck_present");
           continue;
         }
-        console.log(`[vsb] ${cartId} missing in VSB page; adding...`);
+        logInfo(`[vsb] ${cartId} missing in VSB page; adding...`);
         await searchAndSelectCourse(cartId, { applyUncheck: true });
         await page.waitForTimeout(350);
 
@@ -967,20 +1040,20 @@ function createVsbBrowserSource(db, config) {
         if (!existsAfterAdd) {
           setCoursePresenceCache(cartId, false, "sync_post_add_absent");
           allSynced = false;
-          console.log(`[vsb] ${cartId} still not visible after add attempt; will retry later.`);
+          logInfo(`[vsb] ${cartId} still not visible after add attempt; will retry later.`);
         } else {
           setCoursePresenceCache(cartId, true, "sync_post_add_present");
         }
       } catch (error) {
         setCoursePresenceCache(cartId, false, "sync_error");
         allSynced = false;
-        console.log(`[vsb] Warning: failed to sync tracked course ${cartId}: ${error.message}`);
+        logInfo(`[vsb] Warning: failed to sync tracked course ${cartId}: ${error.message}`);
       }
     }
 
     hasSyncedTrackedCoursesForContext = allSynced;
     if (!allSynced) {
-      console.log("[vsb] Tracked-course sync incomplete; will retry on next refresh.");
+      logInfo("[vsb] Tracked-course sync incomplete; will retry on next refresh.");
     }
   }
 
@@ -1018,18 +1091,18 @@ function createVsbBrowserSource(db, config) {
         const isAlreadyChecked = await fallWinterRadio.isChecked().catch(() => false);
         
         if (!isAlreadyChecked) {
-          console.log("[vsb] Clicking Fall/Winter 2025-2026 radio button...");
+          logInfo("[vsb] Clicking Fall/Winter 2025-2026 radio button...");
           await fallWinterRadio.click({ timeout: config.vsbSearchTimeoutMs });
           await page.waitForTimeout(800);
-          console.log("[vsb] Fall/Winter term selected successfully.");
+          logInfo("[vsb] Fall/Winter term selected successfully.");
         } else {
-          console.log("[vsb] Fall/Winter term already selected.");
+          logInfo("[vsb] Fall/Winter term already selected.");
         }
       } else {
-        console.log("[vsb] Expected 2 session radio buttons, found " + radioCount);
+        logInfo("[vsb] Expected 2 session radio buttons, found " + radioCount);
       }
     } catch (e) {
-      console.log("[vsb] Warning: Could not select Fall/Winter term:", e.message);
+      logInfo("[vsb] Warning: Could not select Fall/Winter term:", e.message);
     }
 
     const cartIdText = String(cartId || "").trim();
@@ -1045,7 +1118,7 @@ function createVsbBrowserSource(db, config) {
     });
 
     if (attemptedRefreshOnly && cartIdText && candidates.length === 0) {
-      console.log(
+      logInfo(
         `[vsb] No JSP captured on refresh-only for ${cartIdText}; trying targeted search capture.`
       );
       candidates = await withGetClassCapture(async () => {
@@ -1055,7 +1128,7 @@ function createVsbBrowserSource(db, config) {
 
     if (candidates.length === 0) {
       if (latestStoredCandidate && hasFreshStoredFile) {
-        console.log("[vsb] No fresh JSP captured; reusing fresh cached JSP.");
+        logInfo("[vsb] No fresh JSP captured; reusing fresh cached JSP.");
         if (cartId) {
           recordPresenceFromCandidate(cartId, latestStoredCandidate);
         }
@@ -1089,7 +1162,7 @@ function createVsbBrowserSource(db, config) {
       return { status: "session_ok_auto" };
     }
 
-    console.log(
+    logInfo(
       `[vsb] Login required. Please login in the opened browser window. Waiting up to ${config.vsbLoginWaitSeconds} seconds.`
     );
 
@@ -1105,7 +1178,7 @@ function createVsbBrowserSource(db, config) {
       if (await isLoggedOutScreenVisible()) {
         throw new Error("VSB login not completed: login UI is still visible.");
       }
-      console.log(
+      logInfo(
         "[vsb] Enter Course selector not detected after login wait. Continuing with manual session fallback."
       );
     }

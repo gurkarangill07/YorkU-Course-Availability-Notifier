@@ -30,6 +30,11 @@ CourseNotif monitors tracked courses and notifies users when seats open (`os > 0
   - retry/backoff for transient delivery failures
   - idempotency guard per tracked open-seat event
   - suppression window policy to prevent near-duplicate sends
+- Observability baseline is implemented:
+  - structured logs for API/worker/monitor/notification/VSB flows
+  - in-process metrics registry with Prometheus-style `/api/metrics`
+  - worker heartbeat snapshots + health checks (`/api/worker-health`, `npm run monitor:health`)
+  - operations runbook (`docs/RUNBOOK.md`)
 - Automated tests exist for parser, monitor dispatch logic, and API auth/course flows (`test/*.test.js`).
 - CI workflow runs on PRs and `main` pushes and fails on smoke/test regressions (`.github/workflows/ci.yml`).
 
@@ -43,7 +48,11 @@ CourseNotif monitors tracked courses and notifies users when seats open (`os > 0
 - `src/vsbSource.js`: source mode switcher (`browser` / `filesystem` / `db`)
 - `src/jspParser.js`: parser for JSON/XML-like JSP payload variants
 - `src/db.js`: PostgreSQL access layer
+- `src/logger.js`: structured logging utility
+- `src/metrics.js`: metrics registry and Prometheus renderer
+- `src/workerHealth.js`: worker heartbeat file helpers and health evaluator
 - `db/schema.sql`: schema and compatibility migration guards
+- `docs/RUNBOOK.md`: incident runbooks and alert conditions
 - `test/*.test.js`: unit + integration tests
 - `.github/workflows/ci.yml`: CI gates (smoke + tests)
 - `scripts/*.sh`: env loader, supervisor scripts, and launchd helpers
@@ -113,6 +122,16 @@ export AUTH_OTP_MAX_FAILED_ATTEMPTS="5"
 export AUTH_SESSION_DAYS="30"
 export AUTH_COOKIE_SECURE="false"
 export OTP_PEPPER="change_this_random_secret"
+```
+
+Observability and operations settings (optional but recommended):
+
+```bash
+export LOG_LEVEL="info"                        # debug | info | warn | error
+export LOG_FORMAT="text"                       # text | json
+export METRICS_BEARER_TOKEN=""                 # set to require Bearer auth on /api/metrics and /api/worker-health
+export WORKER_HEALTH_PATH="/tmp/coursenotif_worker_health.json"
+export WORKER_HEALTH_MAX_STALE_SECONDS="300"
 ```
 
 Gmail requirement:
@@ -221,6 +240,12 @@ Continuous loop:
 npm run monitor:loop
 ```
 
+Worker health check (CLI):
+
+```bash
+npm run monitor:health
+```
+
 Immediate forced check for one user-course:
 
 ```bash
@@ -246,6 +271,20 @@ Run local CI-equivalent gate:
 npm run ci
 ```
 
+Metrics and health endpoints:
+
+```bash
+curl -sS http://localhost:3000/api/metrics
+curl -sS http://localhost:3000/api/worker-health
+```
+
+If `METRICS_BEARER_TOKEN` is configured, include:
+
+```bash
+curl -sS -H "Authorization: Bearer $METRICS_BEARER_TOKEN" http://localhost:3000/api/metrics
+curl -sS -H "Authorization: Bearer $METRICS_BEARER_TOKEN" http://localhost:3000/api/worker-health
+```
+
 ## Local env helpers (`.env.local`)
 
 Use wrapper scripts if you keep env vars in `.env.local`:
@@ -256,6 +295,7 @@ npm run monitor:init-login:local
 npm run monitor:init-login:keep-open:local
 npm run monitor:once:local
 npm run monitor:loop:local
+npm run monitor:health:local
 ```
 
 The wrapper script is `scripts/with-env.sh`.
@@ -284,6 +324,8 @@ bash scripts/uninstall-monitor-launchd.sh
 ## API endpoints
 
 - `GET /api/health`
+- `GET /api/metrics` (optional bearer auth via `METRICS_BEARER_TOKEN`)
+- `GET /api/worker-health` (optional bearer auth via `METRICS_BEARER_TOKEN`)
 - `GET /api/auth/me`
 - `POST /api/auth/send-otp`
 - `POST /api/auth/verify-otp`
@@ -297,3 +339,7 @@ bash scripts/uninstall-monitor-launchd.sh
 - No dedicated UI/reporting page for notification delivery attempts yet.
 - OTP auth is implemented, but no external identity provider and no distributed/session revocation dashboard.
 - Test coverage is still limited and does not yet cover full browser automation paths.
+
+## Runbooks
+
+- Incident runbooks and alert conditions live in `docs/RUNBOOK.md`.
