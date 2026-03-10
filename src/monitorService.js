@@ -11,6 +11,10 @@ const DEFAULT_NOTIFICATION_POLICY = {
   dispatchLeaseSeconds: 300
 };
 const monitorLogger = createLogger({ component: "monitor" });
+const INVALID_CODE_MAX_ATTEMPTS = Number.parseInt(
+  process.env.INVALID_CODE_MAX_ATTEMPTS || "2",
+  10
+);
 
 function parsePositiveInt(value, fallback) {
   const parsed = Number.parseInt(value, 10);
@@ -420,7 +424,7 @@ async function processTrackedCourse({
         const attempts = await db.incrementUserCourseInvalidAttempts(
           target.user_course_id
         );
-        if (attempts !== null && attempts >= 5) {
+        if (attempts !== null && attempts >= INVALID_CODE_MAX_ATTEMPTS) {
           await notifier.sendInvalidCourseEmail({
             toEmail: target.email,
             cartId: target.cart_id,
@@ -444,7 +448,7 @@ async function processTrackedCourse({
         const attempts = await db.incrementUserCourseInvalidAttempts(
           target.user_course_id
         );
-        if (attempts !== null && attempts >= 5) {
+        if (attempts !== null && attempts >= INVALID_CODE_MAX_ATTEMPTS) {
           await notifier.sendInvalidCourseEmail({
             toEmail: target.email,
             cartId: target.cart_id,
