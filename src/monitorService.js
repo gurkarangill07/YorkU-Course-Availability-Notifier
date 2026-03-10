@@ -376,6 +376,7 @@ async function processTrackedCourse({
   target,
   db,
   vsbSource,
+  notifier,
   notificationPolicy,
   forceRefresh = false
 }) {
@@ -714,6 +715,7 @@ async function monitorOnce({
         target,
         db,
         vsbSource,
+        notifier,
         notificationPolicy: policy,
         forceRefresh: false
       });
@@ -751,6 +753,7 @@ async function monitorOnce({
                 target,
                 db,
                 vsbSource,
+                notifier,
                 notificationPolicy: policy,
                 forceRefresh: true
               });
@@ -838,6 +841,7 @@ async function runImmediateCheckForNewCourse({
       target,
       db,
       vsbSource,
+      notifier,
       notificationPolicy: policy,
       forceRefresh: true
     });
@@ -876,6 +880,7 @@ async function runImmediateCheckForNewCourse({
               target,
               db,
               vsbSource,
+              notifier,
               notificationPolicy: policy,
               forceRefresh: true
             });
