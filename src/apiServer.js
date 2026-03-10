@@ -121,6 +121,10 @@ function mapTrackedCourseRow(row) {
     os: Number.isFinite(Number(row.os)) ? Number(row.os) : 0,
     trackingStatus: row.tracking_status || "active",
     notifiedAt: row.notified_at || null,
+    invalidAttempts: Number.isFinite(Number(row.invalid_attempts))
+      ? Number(row.invalid_attempts)
+      : 0,
+    invalidNotifiedAt: row.invalid_notified_at || null,
     createdAt: row.created_at
   };
 }
@@ -514,7 +518,7 @@ function createApiApp({
           });
         }
         let resumed = false;
-        if (existing.tracking_status === "notified") {
+        if (existing.tracking_status === "notified" || existing.tracking_status === "invalid") {
           await db.resumeUserCourseForUser({
             userCourseId: existing.user_course_id,
             userId

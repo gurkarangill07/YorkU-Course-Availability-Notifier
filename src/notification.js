@@ -172,6 +172,37 @@ async function sendCourseOpenEmail({ toEmail, cartId, courseName, os }) {
   });
 }
 
+async function sendInvalidCourseEmail({ toEmail, cartId, courseName }) {
+  const cartIdText = String(cartId || "").trim();
+  const courseTitle = String(courseName || cartIdText || "Tracked course").trim();
+  const appUrl = String(process.env.APP_BASE_URL || "http://localhost:3000").trim();
+  const subject = `Course code ${cartIdText || courseTitle} looks invalid`;
+  const text = [
+    "We could not find this course code after multiple checks.",
+    "",
+    `Course: ${courseTitle}`,
+    `Cart ID: ${cartIdText || "unknown"}`,
+    "",
+    "Please verify the code and re-add it if needed.",
+    `Open: ${appUrl}`
+  ].join("\n");
+  const html = [
+    "<p><strong>Course code not found.</strong></p>",
+    "<p>We could not find this course code after multiple checks.</p>",
+    `<p>Course: ${courseTitle}</p>`,
+    `<p>Cart ID: <code>${cartIdText || "unknown"}</code></p>`,
+    "<p>Please verify the code and re-add it if needed.</p>",
+    `<p><a href="${appUrl}">Open CourseNotif</a></p>`
+  ].join("");
+
+  await sendMail({
+    toEmail,
+    subject,
+    text,
+    html
+  });
+}
+
 async function sendSessionExpiredEmail({ toEmail, reason }) {
   const reasonText = String(reason || "Unknown session error").trim();
   const subject = "VSB session expired or failed";
@@ -226,6 +257,7 @@ async function sendLoginOtpEmail({ toEmail, otpCode, expiresMinutes = 10 }) {
 
 module.exports = {
   sendCourseOpenEmail,
+  sendInvalidCourseEmail,
   sendSessionExpiredEmail,
   sendLoginOtpEmail
 };

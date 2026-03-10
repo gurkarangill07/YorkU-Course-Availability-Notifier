@@ -510,10 +510,13 @@
 
             trackedCourses.forEach(course => {
                 const isNotified = course.trackingStatus === 'notified';
-                const stateLabel = isNotified ? 'Notified - awaiting your action' : 'Actively tracking';
+                const isInvalid = course.trackingStatus === 'invalid';
+                const stateLabel = isInvalid
+                    ? 'Invalid code - verify and track again'
+                    : (isNotified ? 'Notified - awaiting your action' : 'Actively tracking');
                 const li = document.createElement('li');
                 li.className = 'course-item';
-                const actionsHtml = isNotified
+                const actionsHtml = (isNotified || isInvalid)
                     ? `<div class="item-actions">
                         <button class="resume-btn" onclick="resumeTracking(${course.id})">Track Again</button>
                         <button class="stop-btn" onclick="stopTracking(${course.id})">Remove</button>

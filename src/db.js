@@ -64,10 +64,14 @@ function createDb({ databaseUrl }) {
       ALTER TABLE user_courses
       ADD COLUMN IF NOT EXISTS notified_at TIMESTAMPTZ;
       ALTER TABLE user_courses
+      ADD COLUMN IF NOT EXISTS invalid_attempts INTEGER NOT NULL DEFAULT 0;
+      ALTER TABLE user_courses
+      ADD COLUMN IF NOT EXISTS invalid_notified_at TIMESTAMPTZ;
+      ALTER TABLE user_courses
       DROP CONSTRAINT IF EXISTS user_courses_tracking_status_check;
       ALTER TABLE user_courses
       ADD CONSTRAINT user_courses_tracking_status_check
-      CHECK (tracking_status IN ('active', 'notified'));
+      CHECK (tracking_status IN ('active', 'notified', 'invalid'));
 
       CREATE TABLE IF NOT EXISTS notification_attempts (
         id BIGSERIAL PRIMARY KEY,
@@ -252,6 +256,8 @@ function createDb({ databaseUrl }) {
         uc.display_name,
         uc.tracking_status,
         uc.notified_at,
+        uc.invalid_attempts,
+        uc.invalid_notified_at,
         c.course_name,
         c.os
       FROM user_courses uc
@@ -455,6 +461,8 @@ function createDb({ databaseUrl }) {
         uc.display_name,
         uc.tracking_status,
         uc.notified_at,
+        uc.invalid_attempts,
+        uc.invalid_notified_at,
         c.course_name,
         c.os
       FROM user_courses uc
@@ -478,6 +486,8 @@ function createDb({ databaseUrl }) {
         uc.display_name,
         uc.tracking_status,
         uc.notified_at,
+        uc.invalid_attempts,
+        uc.invalid_notified_at,
         uc.created_at,
         c.course_name,
         c.os
@@ -518,7 +528,53 @@ function createDb({ databaseUrl }) {
       UPDATE user_courses
       SET
         tracking_status = 'notified',
-        notified_at = NOW()
+        notified_at = NOW(),
+        invalid_attempts = 0,
+        invalid_notified_at = NULL
+      WHERE id = $1
+      `,
+      [userCourseId]
+    );
+    return rowCount;
+  }
+
+  async function incrementUserCourseInvalidAttempts(userCourseId) {
+    const { rows } = await pool.query(
+      `
+      UPDATE user_courses
+      SET
+        invalid_attempts = invalid_attempts + 1,
+        updated_at = NOW()
+      WHERE id = $1
+      RETURNING invalid_attempts
+      `,
+      [userCourseId]
+    );
+    return rows[0] ? Number(rows[0].invalid_attempts) : null;
+  }
+
+  async function markUserCourseInvalid(userCourseId) {
+    const { rowCount } = await pool.query(
+      `
+      UPDATE user_courses
+      SET
+        tracking_status = 'invalid',
+        notified_at = NULL,
+        updated_at = NOW()
+      WHERE id = $1
+      `,
+      [userCourseId]
+    );
+    return rowCount;
+  }
+
+  async function markUserCourseInvalidNotified(userCourseId) {
+    const { rowCount } = await pool.query(
+      `
+      UPDATE user_courses
+      SET
+        invalid_notified_at = NOW(),
+        updated_at = NOW()
       WHERE id = $1
       `,
       [userCourseId]
@@ -554,7 +610,9 @@ function createDb({ databaseUrl }) {
         UPDATE user_courses
         SET
           tracking_status = 'active',
-          notified_at = NULL
+          notified_at = NULL,
+          invalid_attempts = 0,
+          invalid_notified_at = NULL
         WHERE id = $1 AND user_id = $2
         `,
         [userCourseId, userId]
@@ -1178,9 +1236,11 @@ function createDb({ databaseUrl }) {
         display_name,
         tracking_status,
         notified_at,
+        invalid_attempts,
+        invalid_notified_at,
         created_at
       )
-      VALUES ($1, $2, $3, 'active', NULL, NOW())
+      VALUES ($1, $2, $3, 'active', NULL, 0, NULL, NOW())
       ON CONFLICT (user_id, cart_id) DO NOTHING
       RETURNING id
       `,
@@ -1213,6 +1273,9 @@ function createDb({ databaseUrl }) {
     stopTrackingUserCourse,
     stopTrackingUserCourseForUser,
     markUserCourseNotified,
+    incrementUserCourseInvalidAttempts,
+    markUserCourseInvalid,
+    markUserCourseInvalidNotified,
     resetNotificationStateForUserCourse,
     resumeUserCourseForUser,
     ensureCourseExists,

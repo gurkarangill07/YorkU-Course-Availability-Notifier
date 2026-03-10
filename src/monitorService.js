@@ -194,6 +194,11 @@ function computeRetryDelayMs({
   return boundedSeconds * 1000;
 }
 
+function isInvalidCourseError(error) {
+  const message = (error && error.message ? error.message : "").toLowerCase();
+  return message.includes("could not locate cartid");
+}
+
 async function notifySessionFailureIfNeeded({
   db,
   notifier,
@@ -411,10 +416,56 @@ async function processTrackedCourse({
     parsed = parseCourseFromJsp(latestFile.jspBody, target.cart_id);
   } catch (error) {
     if (shouldForceRefresh) {
+      if (isInvalidCourseError(error)) {
+        const attempts = await db.incrementUserCourseInvalidAttempts(
+          target.user_course_id
+        );
+        if (attempts !== null && attempts >= 5) {
+          await db.markUserCourseInvalid(target.user_course_id);
+          if (!target.invalid_notified_at) {
+            await notifier.sendInvalidCourseEmail({
+              toEmail: target.email,
+              cartId: target.cart_id,
+              courseName: target.display_name || target.course_name || target.cart_id
+            });
+            await db.markUserCourseInvalidNotified(target.user_course_id);
+          }
+          return {
+            status: "invalid_and_stopped",
+            queueAction: "invalid",
+            os: 0
+          };
+        }
+      }
       throw error;
     }
     latestFile = await loadLatestFile({ refreshNow: true });
-    parsed = parseCourseFromJsp(latestFile.jspBody, target.cart_id);
+    try {
+      parsed = parseCourseFromJsp(latestFile.jspBody, target.cart_id);
+    } catch (retryError) {
+      if (isInvalidCourseError(retryError)) {
+        const attempts = await db.incrementUserCourseInvalidAttempts(
+          target.user_course_id
+        );
+        if (attempts !== null && attempts >= 5) {
+          await db.markUserCourseInvalid(target.user_course_id);
+          if (!target.invalid_notified_at) {
+            await notifier.sendInvalidCourseEmail({
+              toEmail: target.email,
+              cartId: target.cart_id,
+              courseName: target.display_name || target.course_name || target.cart_id
+            });
+            await db.markUserCourseInvalidNotified(target.user_course_id);
+          }
+          return {
+            status: "invalid_and_stopped",
+            queueAction: "invalid",
+            os: 0
+          };
+        }
+      }
+      throw retryError;
+    }
   }
 
   await db.upsertCourseFromJsp({
@@ -674,7 +725,7 @@ async function monitorOnce({
       } else if (result.status === "suppressed_and_notified") {
         summary.suppressed += 1;
         summary.stopped += 1;
-      } else if (result.status === "failed_and_stopped") {
+      } else if (result.status === "failed_and_stopped" || result.status === "invalid_and_stopped") {
         summary.failures += 1;
         summary.stopped += 1;
       }
@@ -714,7 +765,7 @@ async function monitorOnce({
               } else if (retryResult.status === "suppressed_and_notified") {
                 summary.suppressed += 1;
                 summary.stopped += 1;
-              } else if (retryResult.status === "failed_and_stopped") {
+              } else if (retryResult.status === "failed_and_stopped" || retryResult.status === "invalid_and_stopped") {
                 summary.failures += 1;
                 summary.stopped += 1;
               }
