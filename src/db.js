@@ -631,7 +631,7 @@ function createDb({ databaseUrl }) {
     const client = await pool.connect();
     try {
       await client.query("BEGIN");
-      const { rowCount } = await client.query(
+      const { rows: resumedRows } = await client.query(
         `
         UPDATE user_courses
         SET
@@ -641,13 +641,15 @@ function createDb({ databaseUrl }) {
           invalid_notified_at = NULL,
           updated_at = NOW()
         WHERE id = $1 AND user_id = $2
+        RETURNING cart_id
         `,
         [userCourseId, userId]
       );
-      if (!rowCount) {
+      if (!resumedRows[0]) {
         await client.query("ROLLBACK");
         return 0;
       }
+      const resumedCartId = resumedRows[0].cart_id;
 
       await client.query(
         `
@@ -661,13 +663,19 @@ function createDb({ databaseUrl }) {
               FLOOR(EXTRACT(EPOCH FROM NOW()) * 1000)::text
           END,
           updated_at = NOW()
-        WHERE user_course_id = $1
+        WHERE
+          user_course_id = $1
+          OR (
+            event_type = 'course_open'
+            AND user_id = $2
+            AND cart_id = $3
+          )
         `,
-        [userCourseId]
+        [userCourseId, userId, resumedCartId]
       );
 
       await client.query("COMMIT");
-      return rowCount;
+      return 1;
     } catch (error) {
       try {
         await client.query("ROLLBACK");
@@ -1274,7 +1282,30 @@ function createDb({ databaseUrl }) {
       [userId, cartId, normalizedDisplayName]
     );
 
-    return rows[0] || null;
+    const inserted = rows[0] || null;
+    if (inserted) {
+      await pool.query(
+        `
+        UPDATE notification_attempts
+        SET
+          idempotency_key = idempotency_key || ':archived:' || id::text || ':' ||
+            FLOOR(EXTRACT(EPOCH FROM NOW()) * 1000)::text,
+          suppression_key = CASE
+            WHEN suppression_key IS NULL THEN NULL
+            ELSE suppression_key || ':archived:' || id::text || ':' ||
+              FLOOR(EXTRACT(EPOCH FROM NOW()) * 1000)::text
+          END,
+          updated_at = NOW()
+        WHERE
+          event_type = 'course_open'
+          AND user_id = $1
+          AND cart_id = $2
+        `,
+        [userId, cartId]
+      );
+    }
+
+    return inserted;
   }
 
   return {
