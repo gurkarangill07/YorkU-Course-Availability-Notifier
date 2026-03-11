@@ -203,6 +203,17 @@ function isInvalidCourseError(error) {
   return message.includes("could not locate cartid");
 }
 
+function isTrueLike(value) {
+  if (value === true) {
+    return true;
+  }
+  if (typeof value === "string") {
+    const normalized = value.trim().toLowerCase();
+    return normalized === "true" || normalized === "t" || normalized === "1";
+  }
+  return value === 1;
+}
+
 async function markUserCourseNotifiedCompat(db, userCourseId) {
   if (typeof db.markUserCourseNotified === "function") {
     await db.markUserCourseNotified(userCourseId);
@@ -450,6 +461,10 @@ async function processTrackedCourse({
   }
 
   let shouldForceRefresh = forceRefresh;
+  const requiresFreshScan = isTrueLike(target && target.requires_fresh_scan);
+  if (requiresFreshScan) {
+    shouldForceRefresh = true;
+  }
   if (!shouldForceRefresh) {
     const latestStored = await db.getSharedLatestJspFile();
     const trackedCreatedAtTs = toTimestamp(target.created_at);
@@ -538,6 +553,12 @@ async function processTrackedCourse({
     os: parsed.os
   });
   await resetInvalidAttemptsCompat(db, target.user_course_id);
+  if (
+    requiresFreshScan &&
+    typeof db.markUserCourseFreshScanCompleted === "function"
+  ) {
+    await db.markUserCourseFreshScanCompleted(target.user_course_id);
+  }
 
   if (parsed.os > 0) {
     metrics.increment(

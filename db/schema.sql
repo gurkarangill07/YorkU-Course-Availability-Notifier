@@ -60,6 +60,7 @@ CREATE TABLE IF NOT EXISTS user_courses (
   notified_at TIMESTAMPTZ,
   invalid_attempts INTEGER NOT NULL DEFAULT 0 CHECK (invalid_attempts >= 0),
   invalid_notified_at TIMESTAMPTZ,
+  requires_fresh_scan BOOLEAN NOT NULL DEFAULT FALSE,
   created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
   updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
   CONSTRAINT user_courses_user_id_cart_id_unique UNIQUE (user_id, cart_id)
@@ -161,6 +162,8 @@ ALTER TABLE user_courses
   ADD COLUMN IF NOT EXISTS invalid_attempts INTEGER NOT NULL DEFAULT 0;
 ALTER TABLE user_courses
   ADD COLUMN IF NOT EXISTS invalid_notified_at TIMESTAMPTZ;
+ALTER TABLE user_courses
+  ADD COLUMN IF NOT EXISTS requires_fresh_scan BOOLEAN NOT NULL DEFAULT FALSE;
 ALTER TABLE user_courses
   ADD COLUMN IF NOT EXISTS updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW();
 ALTER TABLE user_courses

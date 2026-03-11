@@ -17,6 +17,7 @@ CourseNotif monitors tracked courses and notifies users when seats open (`os > 0
   - `--once`
   - loop mode (default)
   - `--check-new-course <userId> <cartId>`
+  - resumed/newly-tracked courses force one fresh JSP capture before cache reuse
 - VSB source modes:
   - `browser` (Playwright automation and live response capture)
   - `filesystem` (read JSP files from directory)

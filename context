@@ -69,6 +69,8 @@ Last updated: March 11, 2026
   - `--once`
   - default loop mode
   - `--check-new-course <userId> <cartId>`
+- Resume/re-track behavior:
+  - resumed/newly-tracked courses are marked for one forced fresh scan before cached JSP reuse
 - Compliance/policy controls:
   - minimum poll interval enforcement via `MIN_POLL_INTERVAL_SECONDS`
   - emergency monitoring disable via `MONITOR_EMERGENCY_DISABLE`

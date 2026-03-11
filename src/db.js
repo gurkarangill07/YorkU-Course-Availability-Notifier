@@ -91,6 +91,8 @@ function createDb({ databaseUrl }) {
       ALTER TABLE user_courses
       ADD COLUMN IF NOT EXISTS updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW();
       ALTER TABLE user_courses
+      ADD COLUMN IF NOT EXISTS requires_fresh_scan BOOLEAN NOT NULL DEFAULT FALSE;
+      ALTER TABLE user_courses
       DROP CONSTRAINT IF EXISTS user_courses_tracking_status_check;
       ALTER TABLE user_courses
       ADD CONSTRAINT user_courses_tracking_status_check
@@ -281,6 +283,7 @@ function createDb({ databaseUrl }) {
         uc.notified_at,
         uc.invalid_attempts,
         uc.invalid_notified_at,
+        uc.requires_fresh_scan,
         c.course_name,
         c.os
       FROM user_courses uc
@@ -486,6 +489,7 @@ function createDb({ databaseUrl }) {
         uc.notified_at,
         uc.invalid_attempts,
         uc.invalid_notified_at,
+        uc.requires_fresh_scan,
         c.course_name,
         c.os
       FROM user_courses uc
@@ -511,6 +515,7 @@ function createDb({ databaseUrl }) {
         uc.notified_at,
         uc.invalid_attempts,
         uc.invalid_notified_at,
+        uc.requires_fresh_scan,
         uc.created_at,
         c.course_name,
         c.os
@@ -550,11 +555,12 @@ function createDb({ databaseUrl }) {
       `
       UPDATE user_courses
       SET
-        tracking_status = 'notified',
-        notified_at = NOW(),
-        invalid_attempts = 0,
-        invalid_notified_at = NULL,
-        updated_at = NOW()
+          tracking_status = 'notified',
+          notified_at = NOW(),
+          invalid_attempts = 0,
+          invalid_notified_at = NULL,
+          requires_fresh_scan = FALSE,
+          updated_at = NOW()
       WHERE id = $1
       `,
       [userCourseId]
@@ -567,10 +573,11 @@ function createDb({ databaseUrl }) {
       `
       UPDATE user_courses
       SET
-        tracking_status = 'invalid',
-        notified_at = NULL,
-        invalid_notified_at = NOW(),
-        updated_at = NOW()
+          tracking_status = 'invalid',
+          notified_at = NULL,
+          invalid_notified_at = NOW(),
+          requires_fresh_scan = FALSE,
+          updated_at = NOW()
       WHERE id = $1
       `,
       [userCourseId]
@@ -608,6 +615,20 @@ function createDb({ databaseUrl }) {
     return rowCount;
   }
 
+  async function markUserCourseFreshScanCompleted(userCourseId) {
+    const { rowCount } = await pool.query(
+      `
+      UPDATE user_courses
+      SET
+        requires_fresh_scan = FALSE,
+        updated_at = NOW()
+      WHERE id = $1 AND requires_fresh_scan = TRUE
+      `,
+      [userCourseId]
+    );
+    return rowCount;
+  }
+
   async function resetNotificationStateForUserCourse(userCourseId) {
     await pool.query(
       `
@@ -639,6 +660,7 @@ function createDb({ databaseUrl }) {
           notified_at = NULL,
           invalid_attempts = 0,
           invalid_notified_at = NULL,
+          requires_fresh_scan = TRUE,
           updated_at = NOW()
         WHERE id = $1 AND user_id = $2
         RETURNING cart_id
@@ -1273,9 +1295,10 @@ function createDb({ databaseUrl }) {
         notified_at,
         invalid_attempts,
         invalid_notified_at,
+        requires_fresh_scan,
         created_at
       )
-      VALUES ($1, $2, $3, 'active', NULL, 0, NULL, NOW())
+      VALUES ($1, $2, $3, 'active', NULL, 0, NULL, TRUE, NOW())
       ON CONFLICT (user_id, cart_id) DO NOTHING
       RETURNING id
       `,
@@ -1334,6 +1357,7 @@ function createDb({ databaseUrl }) {
     markUserCourseInvalid,
     incrementUserCourseInvalidAttempts,
     resetUserCourseInvalidAttempts,
+    markUserCourseFreshScanCompleted,
     resetNotificationStateForUserCourse,
     resumeUserCourseForUser,
     ensureCourseExists,
