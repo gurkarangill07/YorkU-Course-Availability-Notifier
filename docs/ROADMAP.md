@@ -1,6 +1,6 @@
 # CourseNotif Roadmap (Implementation-Aligned)
 
-Last updated: March 9, 2026
+Last updated: March 11, 2026
 
 Planning note: keep this file aligned with `README.md` and `context` after major implementation changes.
 
@@ -120,15 +120,22 @@ Goal: improve user trust and self-serve troubleshooting.
 Exit criteria:
 - Users can manage common tracking and recovery tasks from UI without manual support.
 
-## Parallel compliance/policy track
+## Parallel compliance/policy track (in progress)
 
-- Confirm acceptable monitoring cadence and access constraints.
-- Enforce minimum poll interval guardrails.
-- Add emergency feature kill switch.
-- Document compliance assumptions and periodic review process.
+Delivered so far:
+
+- Minimum poll interval guardrail is enforced (`MIN_POLL_INTERVAL_SECONDS`).
+- Emergency monitoring disable switch is implemented (`MONITOR_EMERGENCY_DISABLE`).
+- Policy assumptions and operating procedure are documented (`docs/POLICY.md`).
+
+Remaining:
+
+- Add deployment-time config validation checks to catch unsafe policy values before startup.
+- Add alert routing playbook linkage for sustained emergency-disable windows.
+- Add periodic policy review checklist to release/deployment workflows.
 
 ## Immediate next actions (recommended order)
 
 1. Expand automated test coverage depth (parser fixtures, monitor session branches, API negative cases).
 2. Introduce authentication and identity-bound ownership checks.
-3. Add structured logs/metrics and operational alerts/runbooks.
+3. Wire concrete alert automation and centralized metrics scraping for worker/API.

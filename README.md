@@ -35,6 +35,10 @@ CourseNotif monitors tracked courses and notifies users when seats open (`os > 0
   - in-process metrics registry with Prometheus-style `/api/metrics`
   - worker heartbeat snapshots + health checks (`/api/worker-health`, `npm run monitor:health`)
   - operations runbook (`docs/RUNBOOK.md`)
+- Compliance/policy controls are implemented:
+  - minimum monitor poll interval guardrail (`MIN_POLL_INTERVAL_SECONDS`)
+  - emergency monitoring kill switch (`MONITOR_EMERGENCY_DISABLE`)
+  - policy assumptions documented in `docs/POLICY.md`
 - Automated tests exist for parser, monitor dispatch logic, and API auth/course flows (`test/*.test.js`).
 - CI workflow runs on PRs and `main` pushes and fails on smoke/test regressions (`.github/workflows/ci.yml`).
 
@@ -53,6 +57,7 @@ CourseNotif monitors tracked courses and notifies users when seats open (`os > 0
 - `src/workerHealth.js`: worker heartbeat file helpers and health evaluator
 - `db/schema.sql`: schema and compatibility migration guards
 - `docs/RUNBOOK.md`: incident runbooks and alert conditions
+- `docs/POLICY.md`: compliance guardrails and emergency disable policy
 - `test/*.test.js`: unit + integration tests
 - `.github/workflows/ci.yml`: CI gates (smoke + tests)
 - `scripts/*.sh`: env loader, supervisor scripts, and launchd helpers
@@ -92,6 +97,9 @@ Common runtime settings:
 export PORT="3000"
 export APP_BASE_URL="http://localhost:3000"      # used in notification email links
 export MONITOR_INTERVAL_SECONDS="60"
+export MIN_POLL_INTERVAL_SECONDS="30"             # enforces minimum monitor cadence
+export MONITOR_EMERGENCY_DISABLE="false"          # true disables loop/once/immediate check modes
+export MONITOR_EMERGENCY_REASON="Monitoring paused for incident response."
 export SESSION_DURATION_MINUTES="90"
 export VSB_REFRESH_INTERVAL_MINUTES="15"
 export OWNER_ALERT_EMAIL="you@example.com"   # optional owner alert target
@@ -141,6 +149,12 @@ export METRICS_BEARER_TOKEN=""                 # set to require Bearer auth on /
 export WORKER_HEALTH_PATH="/tmp/coursenotif_worker_health.json"
 export WORKER_HEALTH_MAX_STALE_SECONDS="300"
 ```
+
+Compliance controls behavior:
+
+- If `MONITOR_INTERVAL_SECONDS` is lower than `MIN_POLL_INTERVAL_SECONDS`, worker automatically clamps to the minimum.
+- If `MONITOR_EMERGENCY_DISABLE=true`, worker skips monitoring modes (`--once`, default loop, `--check-new-course`) and writes worker health with `state: "disabled"`.
+- `--init-login` and `--init-login --keep-open` remain available during emergency disable so session recovery can still be performed.
 
 Gmail requirement:
 

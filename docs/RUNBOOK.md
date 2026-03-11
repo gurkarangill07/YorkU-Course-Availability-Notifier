@@ -61,6 +61,27 @@ Use these as baseline thresholds; tune based on real traffic.
 
 ## Incident playbooks
 
+### Emergency monitoring disable (policy control)
+
+Use this when monitoring activity must stop immediately (for example policy/compliance hold, provider abuse alert, or incident containment).
+
+1. Set env:
+```bash
+export MONITOR_EMERGENCY_DISABLE=true
+export MONITOR_EMERGENCY_REASON="INC-123: temporary monitoring hold"
+```
+2. Restart worker supervisor/process.
+3. Confirm worker health reports disabled state:
+```bash
+curl -sS -H "Authorization: Bearer $METRICS_BEARER_TOKEN" http://localhost:3000/api/worker-health
+```
+4. Confirm metric increments:
+- `coursenotif_worker_emergency_disable_skips_total`
+5. After incident remediation, re-enable monitoring:
+```bash
+export MONITOR_EMERGENCY_DISABLE=false
+```
+
 ### A) Worker crash loop
 
 Detection:
