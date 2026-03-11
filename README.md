@@ -10,13 +10,15 @@ CourseNotif monitors tracked courses and notifies users when seats open (`os > 0
   - email input starts blank on unauthenticated page load (no localStorage prefill)
   - authenticated session view shows the signed-in email in the input
   - adding/listing/removing tracked courses
+  - pause/resume tracking controls
+  - per-course tracking status labels
+  - stricter 6-character cart-id validation with inline input guidance
   - optional per-user custom course display name
 - Monitoring worker (`src/worker.js`) with modes:
   - `--init-login`
   - `--init-login --keep-open`
   - `--once`
   - loop mode (default)
-  - `--check-new-course <userId> <cartId>`
   - resumed/newly-tracked courses force one fresh JSP capture before cache reuse
 - VSB source modes:
   - `browser` (Playwright automation and live response capture)
@@ -154,7 +156,7 @@ export WORKER_HEALTH_MAX_STALE_SECONDS="300"
 Compliance controls behavior:
 
 - If `MONITOR_INTERVAL_SECONDS` is lower than `MIN_POLL_INTERVAL_SECONDS`, worker automatically clamps to the minimum.
-- If `MONITOR_EMERGENCY_DISABLE=true`, worker skips monitoring modes (`--once`, default loop, `--check-new-course`) and writes worker health with `state: "disabled"`.
+- If `MONITOR_EMERGENCY_DISABLE=true`, worker skips monitoring modes (`--once`, default loop) and writes worker health with `state: "disabled"`.
 - `--init-login` and `--init-login --keep-open` remain available during emergency disable so session recovery can still be performed.
 
 Gmail requirement:
@@ -269,12 +271,6 @@ Worker health check (CLI):
 npm run monitor:health
 ```
 
-Immediate forced check for one user-course:
-
-```bash
-node src/worker.js --check-new-course <userId> <cartId>
-```
-
 Syntax smoke check:
 
 ```bash
@@ -355,6 +351,8 @@ bash scripts/uninstall-monitor-launchd.sh
 - `POST /api/auth/logout`
 - `GET /api/tracked-courses` (auth required)
 - `POST /api/tracked-courses` (auth required)
+- `POST /api/tracked-courses/:id/pause` (auth required)
+- `POST /api/tracked-courses/:id/resume` (auth required)
 - `DELETE /api/tracked-courses/:id` (auth required)
 
 ## Current limitations

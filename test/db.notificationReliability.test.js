@@ -205,3 +205,134 @@ test(
     }
   }
 );
+
+test(
+  "claimDueNotificationAttempts suppresses due attempts for paused or removed tracking",
+  { skip: !process.env.DATABASE_URL },
+  async () => {
+    const db = createDb({ databaseUrl: process.env.DATABASE_URL });
+    await db.ensureCompatibility();
+    const cleanupPool = new Pool({ connectionString: process.env.DATABASE_URL });
+
+    const suffix = randomSuffix();
+    const email = `notif-stale-${suffix}@example.com`;
+    const cartIdPaused = `SP${suffix.slice(-6)}`.toUpperCase();
+    const cartIdRemoved = `SR${suffix.slice(-6)}`.toUpperCase();
+
+    try {
+      const user = await db.getOrCreateUserByEmail(email);
+
+      await db.ensureCourseExists(cartIdPaused);
+      await db.trackCourseForUser({
+        userId: user.id,
+        cartId: cartIdPaused,
+        displayName: "Paused Course"
+      });
+      const pausedTracked = await db.getTrackedCourseByUserAndCart(user.id, cartIdPaused);
+      assert.ok(pausedTracked);
+
+      const pausedQueued = await db.enqueueCourseOpenNotification({
+        userId: user.id,
+        userCourseId: pausedTracked.user_course_id,
+        cartId: cartIdPaused,
+        toEmail: email,
+        courseName: "Paused Course",
+        os: 1,
+        maxAttempts: 3,
+        suppressionWindowMinutes: 0
+      });
+      assert.equal(pausedQueued.action, "queued");
+
+      const pausedRows = await db.pauseUserCourseForUser({
+        userCourseId: pausedTracked.user_course_id,
+        userId: user.id
+      });
+      assert.equal(pausedRows, 1);
+
+      const pausedClaims = await db.claimDueNotificationAttempts({
+        limit: 25,
+        leaseSeconds: 60
+      });
+      assert.equal(pausedClaims.length, 0);
+
+      const { rows: pausedAttemptRows } = await cleanupPool.query(
+        `
+        SELECT status, last_error
+        FROM notification_attempts
+        WHERE id = $1
+        `,
+        [pausedQueued.attempt.id]
+      );
+      assert.equal(pausedAttemptRows[0].status, "suppressed");
+      assert.match(String(pausedAttemptRows[0].last_error || ""), /tracking no longer active/i);
+
+      await db.ensureCourseExists(cartIdRemoved);
+      await db.trackCourseForUser({
+        userId: user.id,
+        cartId: cartIdRemoved,
+        displayName: "Removed Course"
+      });
+      const removedTracked = await db.getTrackedCourseByUserAndCart(user.id, cartIdRemoved);
+      assert.ok(removedTracked);
+
+      const removedQueued = await db.enqueueCourseOpenNotification({
+        userId: user.id,
+        userCourseId: removedTracked.user_course_id,
+        cartId: cartIdRemoved,
+        toEmail: email,
+        courseName: "Removed Course",
+        os: 1,
+        maxAttempts: 3,
+        suppressionWindowMinutes: 0
+      });
+      assert.equal(removedQueued.action, "queued");
+
+      const deletedRows = await db.stopTrackingUserCourseForUser({
+        userCourseId: removedTracked.user_course_id,
+        userId: user.id
+      });
+      assert.equal(deletedRows, 1);
+
+      const removedClaims = await db.claimDueNotificationAttempts({
+        limit: 25,
+        leaseSeconds: 60
+      });
+      assert.equal(removedClaims.length, 0);
+
+      const { rows: removedAttemptRows } = await cleanupPool.query(
+        `
+        SELECT status, last_error, user_course_id
+        FROM notification_attempts
+        WHERE id = $1
+        `,
+        [removedQueued.attempt.id]
+      );
+      assert.equal(removedAttemptRows[0].status, "suppressed");
+      assert.equal(removedAttemptRows[0].user_course_id, null);
+      assert.match(String(removedAttemptRows[0].last_error || ""), /tracking no longer active/i);
+    } finally {
+      await cleanupPool.query(
+        "DELETE FROM notification_attempts WHERE to_email = $1 OR cart_id = $2 OR cart_id = $3",
+        [email.toLowerCase(), cartIdPaused, cartIdRemoved]
+      );
+      await cleanupPool.query(
+        "DELETE FROM user_courses WHERE user_id IN (SELECT id FROM users WHERE email = $1)",
+        [email.toLowerCase()]
+      );
+      await cleanupPool.query("DELETE FROM courses WHERE cart_id = $1 OR cart_id = $2", [
+        cartIdPaused,
+        cartIdRemoved
+      ]);
+      await cleanupPool.query("DELETE FROM auth_otp_challenges WHERE email = $1", [
+        email.toLowerCase()
+      ]);
+      await cleanupPool.query(
+        "DELETE FROM auth_sessions WHERE user_id IN (SELECT id FROM users WHERE email = $1)",
+        [email.toLowerCase()]
+      );
+      await cleanupPool.query("DELETE FROM users WHERE email = $1", [email.toLowerCase()]);
+      await cleanupPool.end();
+      await db.close();
+    }
+  }
+);

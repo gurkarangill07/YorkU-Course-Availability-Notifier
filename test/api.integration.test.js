@@ -85,7 +85,8 @@ test(
 
     const suffix = randomSuffix();
     const email = `apitest-${suffix}@example.com`;
-    const cartId = `API${suffix.slice(-6)}`.toUpperCase();
+    const numericSuffix = String(suffix).replace(/\D/g, "").slice(-5).padStart(5, "0");
+    const cartId = `A${numericSuffix}`;
     const cleanupPool = new Pool({ connectionString: process.env.DATABASE_URL });
 
     try {
@@ -150,6 +151,40 @@ test(
       assert.equal(Array.isArray(listAfterCreate.json.items), true);
       assert.equal(listAfterCreate.json.items.length, 1);
       assert.equal(listAfterCreate.json.items[0].cartId, cartId);
+      assert.equal(listAfterCreate.json.items[0].trackingStatus, "active");
+      assert.equal(listAfterCreate.json.items[0].lastCheckedAt, null);
+      assert.equal(listAfterCreate.json.items[0].lastObservedOs, null);
+      assert.equal(listAfterCreate.json.items[0].requiresFreshScan, true);
+
+      const invalidCart = await requestJson(baseUrl, "/api/tracked-courses", {
+        method: "POST",
+        cookie: sessionCookie,
+        body: { cartId: "BAD1" }
+      });
+      assert.equal(invalidCart.status, 400);
+      assert.match(String(invalidCart.json.error || ""), /exactly 6 characters/i);
+
+      const pauseTrack = await requestJson(
+        baseUrl,
+        `/api/tracked-courses/${trackedId}/pause`,
+        {
+          method: "POST",
+          cookie: sessionCookie
+        }
+      );
+      assert.equal(pauseTrack.status, 200);
+      assert.equal(pauseTrack.json.ok, true);
+
+      const resumeTrack = await requestJson(
+        baseUrl,
+        `/api/tracked-courses/${trackedId}/resume`,
+        {
+          method: "POST",
+          cookie: sessionCookie
+        }
+      );
+      assert.equal(resumeTrack.status, 200);
+      assert.equal(resumeTrack.json.ok, true);
 
       const del = await requestJson(baseUrl, `/api/tracked-courses/${trackedId}`, {
         method: "DELETE",
