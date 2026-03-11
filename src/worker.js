@@ -63,6 +63,17 @@ function resolveRunMode(args) {
   return "loop";
 }
 
+function isMonitoringMode(mode) {
+  return mode === "loop" || mode === "once" || mode === "check_new_course";
+}
+
+function resolveEmergencyDisableState({ config, mode }) {
+  return {
+    active: Boolean(config.monitorEmergencyDisable && isMonitoringMode(mode)),
+    reason: config.monitorEmergencyReason
+  };
+}
+
 function waitForTerminationSignal() {
   return new Promise((resolve) => {
     let settled = false;
@@ -133,10 +144,58 @@ async function run() {
     "Total worker process starts."
   );
   const startedAt = new Date().toISOString();
+  const args = parseCliArgs(process.argv.slice(2));
+  const mode = resolveRunMode(args);
   const config = loadConfig();
-  const db = createDb({ databaseUrl: config.databaseUrl });
-  await db.ensureCompatibility();
-  const vsbSource = createVsbSource(db, config);
+  let db = null;
+  let vsbSource = null;
+
+  if (config.monitorIntervalWasClamped) {
+    metrics.increment(
+      "worker_policy_poll_interval_clamped_total",
+      1,
+      "Total worker starts where monitor interval was clamped to policy minimum."
+    );
+    workerLogger.warn("monitor interval clamped to policy minimum", {
+      event: "worker.policy.poll_interval_clamped",
+      requestedSeconds: config.requestedMonitorIntervalSeconds,
+      minSeconds: config.minPollIntervalSeconds,
+      appliedSeconds: config.monitorIntervalSeconds
+    });
+  }
+
+  const emergencyDisableState = resolveEmergencyDisableState({
+    config,
+    mode
+  });
+  if (emergencyDisableState.active) {
+    metrics.increment(
+      "worker_emergency_disable_skips_total",
+      1,
+      "Total worker monitoring runs skipped due to emergency disable policy."
+    );
+    workerLogger.warn("worker monitoring run skipped by emergency disable", {
+      event: "worker.policy.emergency_disable_skip",
+      mode,
+      reason: emergencyDisableState.reason
+    });
+    await safeWriteWorkerHealth({
+      state: "disabled",
+      mode,
+      startedAt,
+      disabledAt: new Date().toISOString(),
+      policy: {
+        monitorEmergencyDisable: true,
+        monitorEmergencyReason: emergencyDisableState.reason,
+        requestedMonitorIntervalSeconds: config.requestedMonitorIntervalSeconds,
+        minPollIntervalSeconds: config.minPollIntervalSeconds,
+        monitorIntervalSeconds: config.monitorIntervalSeconds
+      },
+      metrics: metrics.snapshot()
+    });
+    return;
+  }
+
   const notificationPolicy = {
     retryBaseSeconds: config.notificationRetryBaseSeconds,
     retryMaxSeconds: config.notificationRetryMaxSeconds,
@@ -145,17 +204,25 @@ async function run() {
     dispatchBatchSize: config.notificationDispatchBatchSize,
     dispatchLeaseSeconds: config.notificationDispatchLeaseSeconds
   };
-  const args = parseCliArgs(process.argv.slice(2));
-  const mode = resolveRunMode(args);
 
   await safeWriteWorkerHealth({
     state: "starting",
     mode,
     startedAt,
+    policy: {
+      requestedMonitorIntervalSeconds: config.requestedMonitorIntervalSeconds,
+      minPollIntervalSeconds: config.minPollIntervalSeconds,
+      monitorIntervalSeconds: config.monitorIntervalSeconds,
+      monitorIntervalWasClamped: config.monitorIntervalWasClamped
+    },
     metrics: metrics.snapshot()
   });
 
   try {
+    db = createDb({ databaseUrl: config.databaseUrl });
+    await db.ensureCompatibility();
+    vsbSource = createVsbSource(db, config);
+
     if (args.initLogin) {
       const result = await vsbSource.initLoginSession();
       workerLogger.info("init-login completed", {
@@ -273,10 +340,12 @@ async function run() {
       await sleep(config.monitorIntervalSeconds * 1000);
     }
   } finally {
-    if (typeof vsbSource.close === "function") {
+    if (vsbSource && typeof vsbSource.close === "function") {
       await vsbSource.close();
     }
-    await db.close();
+    if (db && typeof db.close === "function") {
+      await db.close();
+    }
     await safeWriteWorkerHealth({
       state: "stopped",
       mode,
@@ -287,7 +356,7 @@ async function run() {
   }
 }
 
-run().catch(async (error) => {
+async function handleWorkerFatal(error) {
   metrics.increment(
     "worker_process_fatal_total",
     1,
@@ -304,4 +373,16 @@ run().catch(async (error) => {
     metrics: metrics.snapshot()
   });
   process.exit(1);
-});
+}
+
+if (require.main === module) {
+  run().catch(handleWorkerFatal);
+}
+
+module.exports = {
+  parseCliArgs,
+  resolveRunMode,
+  isMonitoringMode,
+  resolveEmergencyDisableState,
+  run
+};

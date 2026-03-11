@@ -32,15 +32,67 @@ function readRequiredEnv(name, sourceEnv = process.env) {
   return value;
 }
 
+function readFirstNonEmptyStringEnv(names, fallback, sourceEnv = process.env) {
+  for (const name of names) {
+    if (!(name in sourceEnv)) {
+      continue;
+    }
+    const value = String(sourceEnv[name] || "").trim();
+    if (value) {
+      return value;
+    }
+  }
+  return fallback;
+}
+
+function resolveMonitorCadence(sourceEnv = process.env) {
+  const requestedMonitorIntervalSeconds = parseIntEnv(
+    sourceEnv.MONITOR_INTERVAL_SECONDS,
+    60
+  );
+  const minPollIntervalSeconds = parseIntEnvMin(
+    sourceEnv.MIN_POLL_INTERVAL_SECONDS,
+    30,
+    1
+  );
+  const monitorIntervalSeconds = Math.max(
+    requestedMonitorIntervalSeconds,
+    minPollIntervalSeconds
+  );
+  const monitorIntervalWasClamped =
+    monitorIntervalSeconds !== requestedMonitorIntervalSeconds;
+
+  return {
+    requestedMonitorIntervalSeconds,
+    minPollIntervalSeconds,
+    monitorIntervalSeconds,
+    monitorIntervalWasClamped
+  };
+}
+
 function loadConfig(sourceEnv = process.env) {
   const sourceMode = (sourceEnv.VSB_SOURCE_MODE || "db").trim().toLowerCase();
   if (!["browser", "filesystem", "db"].includes(sourceMode)) {
     throw new Error("VSB_SOURCE_MODE must be one of: browser, filesystem, db");
   }
+  const monitorCadence = resolveMonitorCadence(sourceEnv);
+  const monitorEmergencyReason = readFirstNonEmptyStringEnv(
+    ["MONITOR_EMERGENCY_REASON", "MONITOR_EMERGENCY_DISABLE_REASON"],
+    "Monitoring is disabled by policy (MONITOR_EMERGENCY_DISABLE=true).",
+    sourceEnv
+  );
 
   return {
     databaseUrl: readRequiredEnv("DATABASE_URL", sourceEnv),
-    monitorIntervalSeconds: parseIntEnv(sourceEnv.MONITOR_INTERVAL_SECONDS, 60),
+    monitorIntervalSeconds: monitorCadence.monitorIntervalSeconds,
+    requestedMonitorIntervalSeconds: monitorCadence.requestedMonitorIntervalSeconds,
+    minPollIntervalSeconds: monitorCadence.minPollIntervalSeconds,
+    monitorIntervalWasClamped: monitorCadence.monitorIntervalWasClamped,
+    monitorEmergencyDisable: parseBoolEnv(
+      sourceEnv.MONITOR_EMERGENCY_DISABLE,
+      false
+    ),
+    monitorEmergencyReason,
     ownerAlertEmail: sourceEnv.OWNER_ALERT_EMAIL || sourceEnv.ADMIN_ALERT_EMAIL || null,
     sessionDurationMinutes: parseIntEnv(sourceEnv.SESSION_DURATION_MINUTES, 90),
     vsbSourceMode: sourceMode,

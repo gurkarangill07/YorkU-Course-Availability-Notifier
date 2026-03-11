@@ -252,3 +252,95 @@ test("monitor treats already_failed queue action as terminal + stops tracking", 
   assert.equal(summary.failures, 1);
   assert.equal(summary.dispatchClaimed, 0);
 });
+
+test("monitor forces a fresh capture for courses flagged requires_fresh_scan", async () => {
+  const state = {
+    forceRefreshArgs: [],
+    freshScanCompletedIds: []
+  };
+  const nowIso = new Date().toISOString();
+  const futureIso = new Date(Date.now() + 10 * 60 * 1000).toISOString();
+
+  const db = {
+    getSharedSession: async () => ({
+      session_state: "ok",
+      session_expires_at: futureIso
+    }),
+    listTrackedCourses: async () => [
+      {
+        user_course_id: 88,
+        user_id: 42,
+        cart_id: "ABC123",
+        email: "test@example.com",
+        created_at: nowIso,
+        requires_fresh_scan: true
+      }
+    ],
+    getSharedLatestJspFile: async () => ({
+      file_name: "cached.jsp",
+      jsp_body: JSON.stringify([{ cartid: "ABC123", os: 0, code: "EECS 1001" }]),
+      source_path: null,
+      payload_hash: "cached-hash",
+      generated_at: futureIso
+    }),
+    saveSharedLatestJspFile: async () => {},
+    upsertCourseFromJsp: async () => {},
+    resetUserCourseInvalidAttempts: async () => {},
+    markUserCourseFreshScanCompleted: async (userCourseId) => {
+      state.freshScanCompletedIds.push(userCourseId);
+    },
+    enqueueCourseOpenNotification: async () => {
+      throw new Error("enqueueCourseOpenNotification should not be called for os=0");
+    },
+    claimDueNotificationAttempts: async () => [],
+    markNotificationAttemptSent: async () => {
+      throw new Error("markNotificationAttemptSent should not be called");
+    },
+    markNotificationAttemptFailure: async () => {
+      throw new Error("markNotificationAttemptFailure should not be called");
+    },
+    markSharedSessionExpired: async () => ({ wasAlreadyExpired: false })
+  };
+
+  const vsbSource = {
+    collectGetClassDataCandidates: async ({ forceRefresh }) => {
+      state.forceRefreshArgs.push(forceRefresh);
+      return [
+        {
+          fileName: "fresh.jsp",
+          jspBody: JSON.stringify([{ cartid: "ABC123", os: 0, code: "EECS 1001" }]),
+          sourcePath: null,
+          payloadHash: "fresh-hash",
+          generatedAt: nowIso
+        }
+      ];
+    },
+    pickLatestJspFile: (candidates) => candidates[0]
+  };
+
+  const notifier = {
+    sendCourseOpenEmail: async () => ({ messageId: "provider-mid" }),
+    sendSessionExpiredEmail: async () => {}
+  };
+
+  const summary = await monitorOnce({
+    db,
+    vsbSource,
+    notifier,
+    ownerAlertEmail: null,
+    notificationPolicy: {
+      retryBaseSeconds: 30,
+      retryMaxSeconds: 900,
+      maxAttempts: 5,
+      suppressionWindowMinutes: 30,
+      dispatchBatchSize: 25,
+      dispatchLeaseSeconds: 222
+    }
+  });
+
+  assert.deepEqual(state.forceRefreshArgs, [true]);
+  assert.deepEqual(state.freshScanCompletedIds, [88]);
+  assert.equal(summary.scanned, 1);
+  assert.equal(summary.queued, 0);
+  assert.equal(summary.failures, 0);
+});

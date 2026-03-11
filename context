@@ -1,6 +1,6 @@
 # CourseNotif Context (Current Snapshot)
 
-Last updated: March 10, 2026
+Last updated: March 11, 2026
 
 ## 1) Project identity
 
@@ -69,6 +69,12 @@ Last updated: March 10, 2026
   - `--once`
   - default loop mode
   - `--check-new-course <userId> <cartId>`
+- Resume/re-track behavior:
+  - resumed/newly-tracked courses are marked for one forced fresh scan before cached JSP reuse
+- Compliance/policy controls:
+  - minimum poll interval enforcement via `MIN_POLL_INTERVAL_SECONDS`
+  - emergency monitoring disable via `MONITOR_EMERGENCY_DISABLE`
+  - emergency reason support via `MONITOR_EMERGENCY_REASON`
 - Monitor flow in `src/monitorService.js` includes:
   - notification dispatch retry/backoff
   - session-failure detection with owner alert path
@@ -130,6 +136,7 @@ Last updated: March 10, 2026
   - monitor dispatch/retry unit tests (`test/monitorService.test.js`)
   - API auth + tracked-course integration test (`test/api.integration.test.js`)
   - observability tests (`test/observability.test.js`, `test/logger.test.js`)
+  - policy controls tests (`test/policyControls.test.js`)
 - CI workflow exists at `.github/workflows/ci.yml`
 - CI runs smoke + tests on pull requests and pushes to `main`
 - Current `ahmed/work` branch is green on local CI gate after fixes
@@ -141,6 +148,7 @@ Last updated: March 10, 2026
 - Worker heartbeat + health evaluator exists in `src/workerHealth.js`
 - Worker health API endpoint exists: `GET /api/worker-health` (optional bearer token)
 - Runbook exists at `docs/RUNBOOK.md`
+- Compliance policy documentation exists at `docs/POLICY.md`
 
 ## 3) Environment/config notes
 
@@ -154,6 +162,10 @@ Last updated: March 10, 2026
   - `METRICS_BEARER_TOKEN`
   - `WORKER_HEALTH_PATH`
   - `WORKER_HEALTH_MAX_STALE_SECONDS`
+- Compliance/policy envs are supported:
+  - `MIN_POLL_INTERVAL_SECONDS`
+  - `MONITOR_EMERGENCY_DISABLE`
+  - `MONITOR_EMERGENCY_REASON`
 
 ## 4) Current runbook
 
@@ -189,6 +201,8 @@ Last updated: March 10, 2026
 - Manual supervisor: `bash scripts/start-monitor-supervisor.sh`
 - Stop supervisor: `bash scripts/stop-monitor-supervisor.sh`
 - macOS launchd install/uninstall scripts are available for persistent worker runtime
+- Compliance policy runbook:
+  - `docs/POLICY.md` for guardrails and emergency disable procedure
 
 ## 5) Immediate priorities
 
