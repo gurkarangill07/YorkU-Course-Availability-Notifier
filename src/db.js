@@ -59,6 +59,26 @@ function mapNotificationAttemptRow(row) {
   };
 }
 
+async function hasPausedTrackingStatusConstraint(client) {
+  const { rows } = await client.query(
+    `
+    SELECT pg_get_constraintdef(c.oid) AS constraint_def
+    FROM pg_constraint c
+    INNER JOIN pg_class t ON t.oid = c.conrelid
+    INNER JOIN pg_namespace n ON n.oid = t.relnamespace
+    WHERE
+      c.conname = 'user_courses_tracking_status_check'
+      AND t.relname = 'user_courses'
+      AND n.nspname = current_schema()
+    LIMIT 1
+    `
+  );
+  if (!rows[0] || !rows[0].constraint_def) {
+    return false;
+  }
+  return String(rows[0].constraint_def).includes("'paused'");
+}
+
 function createDb({ databaseUrl }) {
   const sslRejectUnauthorized = parseBoolean(
     process.env.PG_SSL_REJECT_UNAUTHORIZED,
@@ -102,11 +122,6 @@ function createDb({ databaseUrl }) {
         ADD COLUMN IF NOT EXISTS updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW();
         ALTER TABLE user_courses
         ADD COLUMN IF NOT EXISTS requires_fresh_scan BOOLEAN NOT NULL DEFAULT FALSE;
-        ALTER TABLE user_courses
-        DROP CONSTRAINT IF EXISTS user_courses_tracking_status_check;
-        ALTER TABLE user_courses
-        ADD CONSTRAINT user_courses_tracking_status_check
-        CHECK (tracking_status IN ('active', 'paused', 'notified', 'invalid'));
 
         CREATE TABLE IF NOT EXISTS notification_attempts (
           id BIGSERIAL PRIMARY KEY,
@@ -161,6 +176,19 @@ function createDb({ databaseUrl }) {
           ON user_courses(tracking_status);
         `
       );
+
+      // Only rewrite the status constraint when older schemas do not include 'paused'.
+      if (!(await hasPausedTrackingStatusConstraint(client))) {
+        await client.query(
+          `
+          ALTER TABLE user_courses
+          DROP CONSTRAINT IF EXISTS user_courses_tracking_status_check;
+          ALTER TABLE user_courses
+          ADD CONSTRAINT user_courses_tracking_status_check
+          CHECK (tracking_status IN ('active', 'paused', 'notified', 'invalid'));
+          `
+        );
+      }
 
       await client.query(
         `
