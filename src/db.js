@@ -76,110 +76,128 @@ function createDb({ databaseUrl }) {
   }
 
   async function ensureCompatibility() {
-    await pool.query(
-      `
-      ALTER TABLE user_courses
-      ADD COLUMN IF NOT EXISTS display_name TEXT;
-      ALTER TABLE user_courses
-      ADD COLUMN IF NOT EXISTS tracking_status TEXT NOT NULL DEFAULT 'active';
-      ALTER TABLE user_courses
-      ADD COLUMN IF NOT EXISTS notified_at TIMESTAMPTZ;
-      ALTER TABLE user_courses
-      ADD COLUMN IF NOT EXISTS invalid_attempts INTEGER NOT NULL DEFAULT 0;
-      ALTER TABLE user_courses
-      ADD COLUMN IF NOT EXISTS invalid_notified_at TIMESTAMPTZ;
-      ALTER TABLE user_courses
-      ADD COLUMN IF NOT EXISTS updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW();
-      ALTER TABLE user_courses
-      ADD COLUMN IF NOT EXISTS requires_fresh_scan BOOLEAN NOT NULL DEFAULT FALSE;
-      ALTER TABLE user_courses
-      DROP CONSTRAINT IF EXISTS user_courses_tracking_status_check;
-      ALTER TABLE user_courses
-      ADD CONSTRAINT user_courses_tracking_status_check
-      CHECK (tracking_status IN ('active', 'notified', 'invalid'));
+    const client = await pool.connect();
+    const compatibilityLockKey = 61184723;
+    try {
+      // Serialize schema compatibility DDL across concurrent workers/tests.
+      await client.query("SELECT pg_advisory_lock($1)", [compatibilityLockKey]);
 
-      CREATE TABLE IF NOT EXISTS notification_attempts (
-        id BIGSERIAL PRIMARY KEY,
-        event_type TEXT NOT NULL CHECK (event_type IN ('course_open')),
-        idempotency_key TEXT NOT NULL UNIQUE,
-        suppression_key TEXT,
-        user_id BIGINT REFERENCES users(id) ON DELETE SET NULL,
-        user_course_id BIGINT REFERENCES user_courses(id) ON DELETE SET NULL,
-        cart_id TEXT NOT NULL,
-        to_email TEXT NOT NULL,
-        payload_json JSONB NOT NULL DEFAULT '{}'::jsonb,
-        status TEXT NOT NULL DEFAULT 'pending'
-          CHECK (status IN ('pending', 'retrying', 'sent', 'failed', 'suppressed')),
-        attempt_count INTEGER NOT NULL DEFAULT 0 CHECK (attempt_count >= 0),
-        max_attempts INTEGER NOT NULL DEFAULT 5 CHECK (max_attempts >= 1),
-        next_retry_at TIMESTAMPTZ,
-        last_attempted_at TIMESTAMPTZ,
-        sent_at TIMESTAMPTZ,
-        suppressed_until TIMESTAMPTZ,
-        provider_message_id TEXT,
-        last_error TEXT,
-        created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-        updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+      await client.query(
+        `
+        ALTER TABLE user_courses
+        ADD COLUMN IF NOT EXISTS display_name TEXT;
+        ALTER TABLE user_courses
+        ADD COLUMN IF NOT EXISTS tracking_status TEXT NOT NULL DEFAULT 'active';
+        ALTER TABLE user_courses
+        ADD COLUMN IF NOT EXISTS notified_at TIMESTAMPTZ;
+        ALTER TABLE user_courses
+        ADD COLUMN IF NOT EXISTS invalid_attempts INTEGER NOT NULL DEFAULT 0;
+        ALTER TABLE user_courses
+        ADD COLUMN IF NOT EXISTS invalid_notified_at TIMESTAMPTZ;
+        ALTER TABLE user_courses
+        ADD COLUMN IF NOT EXISTS last_checked_at TIMESTAMPTZ;
+        ALTER TABLE user_courses
+        ADD COLUMN IF NOT EXISTS last_observed_os INTEGER CHECK (last_observed_os >= 0);
+        ALTER TABLE user_courses
+        ADD COLUMN IF NOT EXISTS updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW();
+        ALTER TABLE user_courses
+        ADD COLUMN IF NOT EXISTS requires_fresh_scan BOOLEAN NOT NULL DEFAULT FALSE;
+        ALTER TABLE user_courses
+        DROP CONSTRAINT IF EXISTS user_courses_tracking_status_check;
+        ALTER TABLE user_courses
+        ADD CONSTRAINT user_courses_tracking_status_check
+        CHECK (tracking_status IN ('active', 'paused', 'notified', 'invalid'));
+
+        CREATE TABLE IF NOT EXISTS notification_attempts (
+          id BIGSERIAL PRIMARY KEY,
+          event_type TEXT NOT NULL CHECK (event_type IN ('course_open')),
+          idempotency_key TEXT NOT NULL UNIQUE,
+          suppression_key TEXT,
+          user_id BIGINT REFERENCES users(id) ON DELETE SET NULL,
+          user_course_id BIGINT REFERENCES user_courses(id) ON DELETE SET NULL,
+          cart_id TEXT NOT NULL,
+          to_email TEXT NOT NULL,
+          payload_json JSONB NOT NULL DEFAULT '{}'::jsonb,
+          status TEXT NOT NULL DEFAULT 'pending'
+            CHECK (status IN ('pending', 'retrying', 'sent', 'failed', 'suppressed')),
+          attempt_count INTEGER NOT NULL DEFAULT 0 CHECK (attempt_count >= 0),
+          max_attempts INTEGER NOT NULL DEFAULT 5 CHECK (max_attempts >= 1),
+          next_retry_at TIMESTAMPTZ,
+          last_attempted_at TIMESTAMPTZ,
+          sent_at TIMESTAMPTZ,
+          suppressed_until TIMESTAMPTZ,
+          provider_message_id TEXT,
+          last_error TEXT,
+          created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+          updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+        );
+
+        ALTER TABLE notification_attempts
+        ADD COLUMN IF NOT EXISTS suppression_key TEXT;
+        ALTER TABLE notification_attempts
+        ADD COLUMN IF NOT EXISTS payload_json JSONB NOT NULL DEFAULT '{}'::jsonb;
+        ALTER TABLE notification_attempts
+        ADD COLUMN IF NOT EXISTS max_attempts INTEGER NOT NULL DEFAULT 5;
+        ALTER TABLE notification_attempts
+        ADD COLUMN IF NOT EXISTS next_retry_at TIMESTAMPTZ;
+        ALTER TABLE notification_attempts
+        ADD COLUMN IF NOT EXISTS last_attempted_at TIMESTAMPTZ;
+        ALTER TABLE notification_attempts
+        ADD COLUMN IF NOT EXISTS sent_at TIMESTAMPTZ;
+        ALTER TABLE notification_attempts
+        ADD COLUMN IF NOT EXISTS suppressed_until TIMESTAMPTZ;
+        ALTER TABLE notification_attempts
+        ADD COLUMN IF NOT EXISTS provider_message_id TEXT;
+        ALTER TABLE notification_attempts
+        ADD COLUMN IF NOT EXISTS last_error TEXT;
+
+        CREATE INDEX IF NOT EXISTS idx_notification_attempts_due
+          ON notification_attempts(status, next_retry_at, id);
+        CREATE INDEX IF NOT EXISTS idx_notification_attempts_suppression
+          ON notification_attempts(event_type, suppression_key, sent_at DESC);
+        CREATE INDEX IF NOT EXISTS idx_notification_attempts_user_course
+          ON notification_attempts(user_course_id);
+        CREATE INDEX IF NOT EXISTS idx_user_courses_tracking_status
+          ON user_courses(tracking_status);
+        `
       );
 
-      ALTER TABLE notification_attempts
-      ADD COLUMN IF NOT EXISTS suppression_key TEXT;
-      ALTER TABLE notification_attempts
-      ADD COLUMN IF NOT EXISTS payload_json JSONB NOT NULL DEFAULT '{}'::jsonb;
-      ALTER TABLE notification_attempts
-      ADD COLUMN IF NOT EXISTS max_attempts INTEGER NOT NULL DEFAULT 5;
-      ALTER TABLE notification_attempts
-      ADD COLUMN IF NOT EXISTS next_retry_at TIMESTAMPTZ;
-      ALTER TABLE notification_attempts
-      ADD COLUMN IF NOT EXISTS last_attempted_at TIMESTAMPTZ;
-      ALTER TABLE notification_attempts
-      ADD COLUMN IF NOT EXISTS sent_at TIMESTAMPTZ;
-      ALTER TABLE notification_attempts
-      ADD COLUMN IF NOT EXISTS suppressed_until TIMESTAMPTZ;
-      ALTER TABLE notification_attempts
-      ADD COLUMN IF NOT EXISTS provider_message_id TEXT;
-      ALTER TABLE notification_attempts
-      ADD COLUMN IF NOT EXISTS last_error TEXT;
+      await client.query(
+        `
+        CREATE TABLE IF NOT EXISTS auth_otp_challenges (
+          id BIGSERIAL PRIMARY KEY,
+          email TEXT NOT NULL,
+          otp_hash TEXT NOT NULL,
+          expires_at TIMESTAMPTZ NOT NULL,
+          failed_attempts INTEGER NOT NULL DEFAULT 0 CHECK (failed_attempts >= 0),
+          consumed_at TIMESTAMPTZ,
+          created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+          CONSTRAINT auth_otp_challenges_email_has_at CHECK (POSITION('@' IN email) > 1)
+        );
 
-      CREATE INDEX IF NOT EXISTS idx_notification_attempts_due
-        ON notification_attempts(status, next_retry_at, id);
-      CREATE INDEX IF NOT EXISTS idx_notification_attempts_suppression
-        ON notification_attempts(event_type, suppression_key, sent_at DESC);
-      CREATE INDEX IF NOT EXISTS idx_notification_attempts_user_course
-        ON notification_attempts(user_course_id);
-      CREATE INDEX IF NOT EXISTS idx_user_courses_tracking_status
-        ON user_courses(tracking_status);
-      `
-    );
+        CREATE TABLE IF NOT EXISTS auth_sessions (
+          id BIGSERIAL PRIMARY KEY,
+          user_id BIGINT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+          token_hash TEXT NOT NULL UNIQUE,
+          expires_at TIMESTAMPTZ NOT NULL,
+          revoked_at TIMESTAMPTZ,
+          created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+        );
 
-    await pool.query(
-      `
-      CREATE TABLE IF NOT EXISTS auth_otp_challenges (
-        id BIGSERIAL PRIMARY KEY,
-        email TEXT NOT NULL,
-        otp_hash TEXT NOT NULL,
-        expires_at TIMESTAMPTZ NOT NULL,
-        failed_attempts INTEGER NOT NULL DEFAULT 0 CHECK (failed_attempts >= 0),
-        consumed_at TIMESTAMPTZ,
-        created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-        CONSTRAINT auth_otp_challenges_email_has_at CHECK (POSITION('@' IN email) > 1)
+        CREATE INDEX IF NOT EXISTS idx_auth_otp_challenges_email_created_at
+          ON auth_otp_challenges(email, created_at DESC);
+        CREATE INDEX IF NOT EXISTS idx_auth_sessions_user_id ON auth_sessions(user_id);
+        CREATE INDEX IF NOT EXISTS idx_auth_sessions_token_hash ON auth_sessions(token_hash);
+        `
       );
-
-      CREATE TABLE IF NOT EXISTS auth_sessions (
-        id BIGSERIAL PRIMARY KEY,
-        user_id BIGINT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
-        token_hash TEXT NOT NULL UNIQUE,
-        expires_at TIMESTAMPTZ NOT NULL,
-        revoked_at TIMESTAMPTZ,
-        created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
-      );
-
-      CREATE INDEX IF NOT EXISTS idx_auth_otp_challenges_email_created_at
-        ON auth_otp_challenges(email, created_at DESC);
-      CREATE INDEX IF NOT EXISTS idx_auth_sessions_user_id ON auth_sessions(user_id);
-      CREATE INDEX IF NOT EXISTS idx_auth_sessions_token_hash ON auth_sessions(token_hash);
-      `
-    );
+    } finally {
+      try {
+        await client.query("SELECT pg_advisory_unlock($1)", [compatibilityLockKey]);
+      } catch (_) {
+        // Connection/session teardown also releases advisory lock.
+      }
+      client.release();
+    }
   }
 
   async function getSharedSession() {
@@ -283,6 +301,8 @@ function createDb({ databaseUrl }) {
         uc.notified_at,
         uc.invalid_attempts,
         uc.invalid_notified_at,
+        uc.last_checked_at,
+        uc.last_observed_os,
         uc.requires_fresh_scan,
         c.course_name,
         c.os
@@ -489,6 +509,8 @@ function createDb({ databaseUrl }) {
         uc.notified_at,
         uc.invalid_attempts,
         uc.invalid_notified_at,
+        uc.last_checked_at,
+        uc.last_observed_os,
         uc.requires_fresh_scan,
         c.course_name,
         c.os
@@ -515,6 +537,8 @@ function createDb({ databaseUrl }) {
         uc.notified_at,
         uc.invalid_attempts,
         uc.invalid_notified_at,
+        uc.last_checked_at,
+        uc.last_observed_os,
         uc.requires_fresh_scan,
         uc.created_at,
         c.course_name,
@@ -543,6 +567,20 @@ function createDb({ databaseUrl }) {
     const { rowCount } = await pool.query(
       `
       DELETE FROM user_courses
+      WHERE id = $1 AND user_id = $2
+      `,
+      [userCourseId, userId]
+    );
+    return rowCount;
+  }
+
+  async function pauseUserCourseForUser({ userCourseId, userId }) {
+    const { rowCount } = await pool.query(
+      `
+      UPDATE user_courses
+      SET
+        tracking_status = 'paused',
+        updated_at = NOW()
       WHERE id = $1 AND user_id = $2
       `,
       [userCourseId, userId]
@@ -629,6 +667,26 @@ function createDb({ databaseUrl }) {
     return rowCount;
   }
 
+  async function recordUserCourseObservation({
+    userCourseId,
+    observedOs,
+    checkedAt = new Date()
+  }) {
+    const safeOs = Math.max(0, Number.parseInt(observedOs, 10) || 0);
+    const { rowCount } = await pool.query(
+      `
+      UPDATE user_courses
+      SET
+        last_checked_at = $2,
+        last_observed_os = $3,
+        updated_at = NOW()
+      WHERE id = $1
+      `,
+      [userCourseId, checkedAt, safeOs]
+    );
+    return rowCount;
+  }
+
   async function resetNotificationStateForUserCourse(userCourseId) {
     await pool.query(
       `
@@ -660,6 +718,8 @@ function createDb({ databaseUrl }) {
           notified_at = NULL,
           invalid_attempts = 0,
           invalid_notified_at = NULL,
+          last_checked_at = NULL,
+          last_observed_os = NULL,
           requires_fresh_scan = TRUE,
           updated_at = NOW()
         WHERE id = $1 AND user_id = $2
@@ -1136,22 +1196,62 @@ function createDb({ databaseUrl }) {
     const safeLeaseSeconds = Math.min(3600, parsePositiveInt(leaseSeconds, 300));
     const { rows } = await pool.query(
       `
-      WITH due AS (
-        SELECT id
-        FROM notification_attempts
+      WITH stale AS (
+        UPDATE notification_attempts na
+        SET
+          status = 'suppressed',
+          next_retry_at = NULL,
+          suppressed_until = COALESCE(na.suppressed_until, NOW()),
+          last_error = 'suppressed: tracking no longer active',
+          updated_at = NOW()
         WHERE
           (
-            status = 'pending'
-            AND (next_retry_at IS NULL OR next_retry_at <= NOW())
+            (
+              na.status = 'pending'
+              AND (na.next_retry_at IS NULL OR na.next_retry_at <= NOW())
+            )
+            OR
+            (
+              na.status = 'retrying'
+              AND na.next_retry_at IS NOT NULL
+              AND na.next_retry_at <= NOW()
+            )
           )
-          OR
+          AND na.event_type = 'course_open'
+          AND NOT EXISTS (
+            SELECT 1
+            FROM user_courses uc
+            WHERE uc.id = na.user_course_id
+              AND uc.tracking_status = 'active'
+          )
+        RETURNING na.id
+      ),
+      due AS (
+        SELECT na.id
+        FROM notification_attempts na
+        LEFT JOIN stale s ON s.id = na.id
+        LEFT JOIN user_courses uc ON uc.id = na.user_course_id
+        WHERE
+          s.id IS NULL
+          AND (
+            (
+              na.status = 'pending'
+              AND (na.next_retry_at IS NULL OR na.next_retry_at <= NOW())
+            )
+            OR
+            (
+              na.status = 'retrying'
+              AND na.next_retry_at IS NOT NULL
+              AND na.next_retry_at <= NOW()
+            )
+          )
+          AND
           (
-            status = 'retrying'
-            AND next_retry_at IS NOT NULL
-            AND next_retry_at <= NOW()
+            na.event_type <> 'course_open'
+            OR (uc.id IS NOT NULL AND uc.tracking_status = 'active')
           )
-        ORDER BY COALESCE(next_retry_at, created_at) ASC, id ASC
-        FOR UPDATE SKIP LOCKED
+        ORDER BY COALESCE(na.next_retry_at, na.created_at) ASC, na.id ASC
+        FOR UPDATE OF na SKIP LOCKED
         LIMIT $1
       )
       UPDATE notification_attempts na
@@ -1353,11 +1453,13 @@ function createDb({ databaseUrl }) {
     getTrackedCourseByUserAndCart,
     stopTrackingUserCourse,
     stopTrackingUserCourseForUser,
+    pauseUserCourseForUser,
     markUserCourseNotified,
     markUserCourseInvalid,
     incrementUserCourseInvalidAttempts,
     resetUserCourseInvalidAttempts,
     markUserCourseFreshScanCompleted,
+    recordUserCourseObservation,
     resetNotificationStateForUserCourse,
     resumeUserCourseForUser,
     ensureCourseExists,

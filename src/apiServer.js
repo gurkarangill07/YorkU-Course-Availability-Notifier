@@ -53,6 +53,10 @@ function normalizeCartId(value) {
   return cartId;
 }
 
+function isValidCartId(cartId) {
+  return /^[A-Z0-9]{6}$/.test(String(cartId || "").trim());
+}
+
 function normalizeCourseName(value) {
   const courseName = String(value || "").trim();
   if (!courseName) {
@@ -69,6 +73,17 @@ function normalizeOtp(value) {
     return null;
   }
   return otp;
+}
+
+function toNullableFiniteNumber(value) {
+  if (value === null || value === undefined || value === "") {
+    return null;
+  }
+  const parsed = Number(value);
+  if (!Number.isFinite(parsed)) {
+    return null;
+  }
+  return parsed;
 }
 
 function parseCookies(rawCookieHeader) {
@@ -114,17 +129,22 @@ function generateSessionToken() {
 }
 
 function mapTrackedCourseRow(row) {
+  const os = toNullableFiniteNumber(row.os);
+  const lastObservedOs = toNullableFiniteNumber(row.last_observed_os);
   return {
     id: row.user_course_id,
     cartId: row.cart_id,
     courseName: row.display_name || row.course_name || row.cart_id,
-    os: Number.isFinite(Number(row.os)) ? Number(row.os) : 0,
+    os: os === null ? 0 : os,
+    lastObservedOs,
+    lastCheckedAt: row.last_checked_at || null,
     trackingStatus: row.tracking_status || "active",
     notifiedAt: row.notified_at || null,
     invalidAttempts: Number.isFinite(Number(row.invalid_attempts))
       ? Number(row.invalid_attempts)
       : 0,
     invalidNotifiedAt: row.invalid_notified_at || null,
+    requiresFreshScan: Boolean(row.requires_fresh_scan),
     createdAt: row.created_at
   };
 }
@@ -506,6 +526,11 @@ function createApiApp({
       if (!cartId) {
         return res.status(400).json({ error: "cartId is required." });
       }
+      if (!isValidCartId(cartId)) {
+        return res.status(400).json({
+          error: "cartId must be exactly 6 characters using only A-Z and 0-9."
+        });
+      }
 
       const userId = req.auth.userId;
       const existing = await db.getTrackedCourseByUserAndCart(userId, cartId);
@@ -518,7 +543,11 @@ function createApiApp({
           });
         }
         let resumed = false;
-        if (existing.tracking_status === "notified" || existing.tracking_status === "invalid") {
+        if (
+          existing.tracking_status === "notified" ||
+          existing.tracking_status === "invalid" ||
+          existing.tracking_status === "paused"
+        ) {
           await db.resumeUserCourseForUser({
             userCourseId: existing.user_course_id,
             userId
@@ -529,14 +558,7 @@ function createApiApp({
         return res.status(200).json({
           created: false,
           resumed,
-          item: {
-            id: refreshed.user_course_id,
-            cartId: refreshed.cart_id,
-            courseName: refreshed.display_name || refreshed.course_name || refreshed.cart_id,
-            os: Number.isFinite(Number(refreshed.os)) ? Number(refreshed.os) : 0,
-            trackingStatus: refreshed.tracking_status || "active",
-            notifiedAt: refreshed.notified_at || null
-          }
+          item: mapTrackedCourseRow(refreshed)
         });
       }
 
@@ -550,15 +572,29 @@ function createApiApp({
 
       return res.status(201).json({
         created: true,
-        item: {
-          id: tracked.user_course_id,
-          cartId: tracked.cart_id,
-          courseName: tracked.display_name || tracked.course_name || tracked.cart_id,
-          os: Number.isFinite(Number(tracked.os)) ? Number(tracked.os) : 0,
-          trackingStatus: tracked.tracking_status || "active",
-          notifiedAt: tracked.notified_at || null
-        }
+        item: mapTrackedCourseRow(tracked)
       });
+    } catch (error) {
+      return next(error);
+    }
+  });
+
+  app.post("/api/tracked-courses/:id/pause", requireAuth, async (req, res, next) => {
+    try {
+      const userCourseId = Number.parseInt(req.params.id, 10);
+      if (Number.isNaN(userCourseId) || userCourseId <= 0) {
+        return res.status(400).json({ error: "Valid user course id is required." });
+      }
+
+      const updatedRows = await db.pauseUserCourseForUser({
+        userCourseId,
+        userId: req.auth.userId
+      });
+      if (!updatedRows) {
+        return res.status(404).json({ error: "Tracked course not found." });
+      }
+
+      return res.json({ ok: true });
     } catch (error) {
       return next(error);
     }

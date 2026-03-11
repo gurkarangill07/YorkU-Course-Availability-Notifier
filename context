@@ -16,16 +16,21 @@ Last updated: March 11, 2026
 - Core tables: `users`, `courses`, `user_courses`, `shared_latest_jsp_file`, `shared_vsb_session`, `notification_attempts`, `auth_otp_challenges`, `auth_sessions`
 - `user_courses` supports:
   - `display_name`
-  - `tracking_status` (`active` | `notified` | `invalid`)
+  - `tracking_status` (`active` | `paused` | `notified` | `invalid`)
   - `notified_at`
   - `invalid_attempts`
   - `invalid_notified_at`
+  - `last_checked_at`
+  - `last_observed_os`
+  - `requires_fresh_scan`
   - `updated_at`
 - DB layer exists in `src/db.js` with compatibility migration guard (`ensureCompatibility`)
 - Resume/retry support is implemented in DB helpers:
   - `markUserCourseNotified`
   - `markUserCourseInvalid`
+  - `pauseUserCourseForUser`
   - `resumeUserCourseForUser`
+  - `recordUserCourseObservation`
   - `resetNotificationStateForUserCourse`
 
 2. API server
@@ -40,10 +45,11 @@ Last updated: March 11, 2026
   - `POST /api/auth/logout`
   - `GET /api/tracked-courses` (auth required)
   - `POST /api/tracked-courses` (auth required)
+  - `POST /api/tracked-courses/:id/pause` (auth required)
   - `POST /api/tracked-courses/:id/resume` (auth required)
   - `DELETE /api/tracked-courses/:id` (auth required)
-- `POST /api/tracked-courses` auto-resumes rows currently in `notified`/`invalid` state
-- Tracked-course responses include status fields (`trackingStatus`, `notifiedAt`, `invalidAttempts`, `invalidNotifiedAt`)
+- `POST /api/tracked-courses` auto-resumes rows currently in `paused`/`notified`/`invalid` state
+- Tracked-course responses include status/detail fields (`trackingStatus`, `notifiedAt`, `invalidAttempts`, `invalidNotifiedAt`, `lastCheckedAt`, `lastObservedOs`, `requiresFreshScan`)
 - Serves `index.html` at `GET /`
 
 3. Frontend
@@ -54,11 +60,12 @@ Last updated: March 11, 2026
   - logout
   - adding tracked courses
   - optional custom course name
-  - listing tracked courses with status text
+  - listing tracked courses with tracking status text
+  - pause tracking
   - stop tracking
-  - resume tracking (`Track Again`) for `notified`/`invalid` states
+  - resume tracking (`Track Again`) for `paused`/`notified`/`invalid` states
   - automatic tracked-course refresh while signed in
-- Course code input is normalized on the client (uppercase alphanumeric, max 6 chars)
+- Course code input is normalized on the client (uppercase alphanumeric, max 6 chars) with inline validation guidance
 - Auto-logout-on-tab-close hook exists but is disabled by default (`AUTO_LOGOUT_ON_TAB_CLOSE=false`)
 
 4. Monitoring worker
@@ -68,7 +75,6 @@ Last updated: March 11, 2026
   - `--init-login --keep-open` (keeps VSB window open until Ctrl+C)
   - `--once`
   - default loop mode
-  - `--check-new-course <userId> <cartId>`
 - Resume/re-track behavior:
   - resumed/newly-tracked courses are marked for one forced fresh scan before cached JSP reuse
 - Compliance/policy controls:
@@ -206,9 +212,9 @@ Last updated: March 11, 2026
 
 ## 5) Immediate priorities
 
-1. Expand automated coverage for `invalid`/`notified` state transitions and resume flows
-2. Add browser-mode integration tests for session recovery and invalid-code paths
-3. Improve notification-attempt visibility (UI or admin API)
+1. Add browser-mode integration tests for session recovery and invalid-code paths
+2. Improve notification-attempt visibility (UI or admin API)
+3. Add clearer UI messaging for auth/session failure recovery paths (beyond generic alerts)
 4. Add centralized alert routing/dashboard automation on top of current observability baseline
 
 ## 6) Notes for future contributors/agents

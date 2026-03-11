@@ -248,6 +248,17 @@ async function resetInvalidAttemptsCompat(db, userCourseId) {
   await db.resetUserCourseInvalidAttempts(userCourseId);
 }
 
+async function recordObservationCompat(db, userCourseId, os) {
+  if (typeof db.recordUserCourseObservation !== "function") {
+    return;
+  }
+  await db.recordUserCourseObservation({
+    userCourseId,
+    observedOs: os,
+    checkedAt: new Date()
+  });
+}
+
 async function notifyInvalidCourseIfNeeded({
   notifier,
   toEmail,
@@ -552,6 +563,7 @@ async function processTrackedCourse({
     courseName: parsed.courseName,
     os: parsed.os
   });
+  await recordObservationCompat(db, target.user_course_id, parsed.os);
   await resetInvalidAttemptsCompat(db, target.user_course_id);
   if (
     requiresFreshScan &&
@@ -920,6 +932,9 @@ async function runImmediateCheckForNewCourse({
   const target = await db.getTrackedCourseByUserAndCart(userId, cartId);
   if (!target) {
     return { status: "not_tracking" };
+  }
+  if (String(target.tracking_status || "").toLowerCase() === "paused") {
+    return { status: "paused" };
   }
 
   try {

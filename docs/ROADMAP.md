@@ -111,11 +111,15 @@ Exit criteria:
 
 Goal: improve user trust and self-serve troubleshooting.
 
-- Show per-course status (last checked time, latest `os`, alert state).
-- Add pause/resume tracking controls.
-- Add clearer UI errors for session/auth failures.
-- Add optional immediate recheck action from UI.
-- Improve cart ID validation and feedback.
+Delivered so far:
+
+- Per-course tracking status is shown in UI.
+- Pause/resume controls are implemented for tracked courses.
+- Cart ID validation is stricter (`A-Z0-9`, exactly 6 chars) with improved UI feedback.
+
+Remaining:
+
+- Add clearer session/auth-specific UI recovery guidance (current UX still uses generic alerts for most failures).
 
 Exit criteria:
 - Users can manage common tracking and recovery tasks from UI without manual support.

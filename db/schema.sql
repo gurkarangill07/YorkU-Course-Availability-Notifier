@@ -56,10 +56,12 @@ CREATE TABLE IF NOT EXISTS user_courses (
   cart_id TEXT NOT NULL REFERENCES courses(cart_id) ON DELETE CASCADE,
   display_name TEXT,
   tracking_status TEXT NOT NULL DEFAULT 'active'
-    CHECK (tracking_status IN ('active', 'notified', 'invalid')),
+    CHECK (tracking_status IN ('active', 'paused', 'notified', 'invalid')),
   notified_at TIMESTAMPTZ,
   invalid_attempts INTEGER NOT NULL DEFAULT 0 CHECK (invalid_attempts >= 0),
   invalid_notified_at TIMESTAMPTZ,
+  last_checked_at TIMESTAMPTZ,
+  last_observed_os INTEGER CHECK (last_observed_os >= 0),
   requires_fresh_scan BOOLEAN NOT NULL DEFAULT FALSE,
   created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
   updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
@@ -163,6 +165,10 @@ ALTER TABLE user_courses
 ALTER TABLE user_courses
   ADD COLUMN IF NOT EXISTS invalid_notified_at TIMESTAMPTZ;
 ALTER TABLE user_courses
+  ADD COLUMN IF NOT EXISTS last_checked_at TIMESTAMPTZ;
+ALTER TABLE user_courses
+  ADD COLUMN IF NOT EXISTS last_observed_os INTEGER CHECK (last_observed_os >= 0);
+ALTER TABLE user_courses
   ADD COLUMN IF NOT EXISTS requires_fresh_scan BOOLEAN NOT NULL DEFAULT FALSE;
 ALTER TABLE user_courses
   ADD COLUMN IF NOT EXISTS updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW();
@@ -170,7 +176,7 @@ ALTER TABLE user_courses
   DROP CONSTRAINT IF EXISTS user_courses_tracking_status_check;
 ALTER TABLE user_courses
   ADD CONSTRAINT user_courses_tracking_status_check
-  CHECK (tracking_status IN ('active', 'notified', 'invalid'));
+  CHECK (tracking_status IN ('active', 'paused', 'notified', 'invalid'));
 
 CREATE INDEX IF NOT EXISTS idx_user_courses_user_id ON user_courses(user_id);
 CREATE INDEX IF NOT EXISTS idx_user_courses_cart_id ON user_courses(cart_id);
