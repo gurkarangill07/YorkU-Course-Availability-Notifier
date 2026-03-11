@@ -42,6 +42,7 @@ CourseNotif monitors tracked courses and notifies users when seats open (`os > 0
   - minimum monitor poll interval guardrail (`MIN_POLL_INTERVAL_SECONDS`)
   - emergency monitoring kill switch (`MONITOR_EMERGENCY_DISABLE`)
   - policy assumptions documented in `docs/POLICY.md`
+- Secret management policy, rotation process, and deployment checklist are documented (`docs/SECRETS.md`, `docs/DEPLOYMENT.md`).
 - Automated tests exist for parser, monitor dispatch logic, and API auth/course flows (`test/*.test.js`).
 - CI workflow runs on PRs and `main` pushes and fails on smoke/test regressions (`.github/workflows/ci.yml`).
 
@@ -228,6 +229,10 @@ If `psql` is not on PATH (common on macOS/Homebrew), use:
 ```bash
 /opt/homebrew/opt/postgresql@16/bin/psql "$DATABASE_URL" -f db/schema.sql
 ```
+
+## Secrets and deployment hygiene
+
+Secrets are not stored in the repo. Use a secret manager and inject env at runtime. The full policy, rotation process, and least-privilege guidance live in `docs/SECRETS.md`. The deployment checklist and preflight steps are in `docs/DEPLOYMENT.md`. If API and worker are deployed separately, provide each process only the env it requires and use distinct SMTP credentials for OTP auth (`SMTP_PASS_AUTH`) vs course notifications (`SMTP_PASS`).
 
 ## Run
 
