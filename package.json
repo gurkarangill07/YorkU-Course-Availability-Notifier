@@ -1,4 +1,4 @@
-{
+﻿{
   "name": "coursenotif-monitor",
   "version": "0.1.0",
   "private": true,
@@ -19,6 +19,7 @@
     "monitor:health": "node scripts/check-worker-health.js",
     "monitor:health:local": "bash scripts/with-env.sh node scripts/check-worker-health.js",
     "smoke": "node scripts/smoke-check.js",
+    "config:validate": "node scripts/validate-config.js",
     "test": "node --test --test-concurrency=1 test/*.test.js",
     "ci": "npm run smoke && npm run test"
   },
@@ -29,3 +30,4 @@
     "playwright": "^1.51.1"
   }
 }
+

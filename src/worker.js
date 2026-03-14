@@ -1,4 +1,4 @@
-const { loadConfig } = require("./config");
+﻿const { loadConfig, validateRuntimeConfig, formatConfigValidationErrors } = require("./config");
 const { createDb } = require("./db");
 const notifier = require("./notification");
 const { createVsbSource } = require("./vsbSource");
@@ -146,6 +146,18 @@ async function run() {
   const startedAt = new Date().toISOString();
   const args = parseCliArgs(process.argv.slice(2));
   const mode = resolveRunMode(args);
+  const validation = validateRuntimeConfig({ env: process.env, runtime: "worker", mode });
+  if (validation.warnings.length) {
+    workerLogger.warn("config validation warnings", {
+      event: "worker.config.validation_warning",
+      warnings: validation.warnings
+    });
+  }
+  if (validation.errors.length) {
+    const error = new Error(formatConfigValidationErrors(validation.errors));
+    error.code = "CONFIG_VALIDATION_FAILED";
+    throw error;
+  }
   const config = loadConfig();
   let db = null;
   let vsbSource = null;
@@ -386,3 +398,5 @@ module.exports = {
   resolveEmergencyDisableState,
   run
 };
+
+

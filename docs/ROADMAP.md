@@ -1,6 +1,6 @@
-# CourseNotif Roadmap (Implementation-Aligned)
+﻿# CourseNotif Roadmap (Implementation-Aligned)
 
-Last updated: March 11, 2026
+Last updated: March 14, 2026
 
 Planning note: keep this file aligned with `README.md` and `context` after major implementation changes.
 
@@ -134,10 +134,10 @@ Delivered so far:
 - Minimum poll interval guardrail is enforced (`MIN_POLL_INTERVAL_SECONDS`).
 - Emergency monitoring disable switch is implemented (`MONITOR_EMERGENCY_DISABLE`).
 - Policy assumptions and operating procedure are documented (`docs/POLICY.md`).
+- Deployment-time config validation checks are automated (run `npm run config:validate` for API + worker).
 
 Remaining:
 
-- Add deployment-time config validation checks to catch unsafe policy values before startup.
 - Add alert routing playbook linkage for sustained emergency-disable windows.
 - Add periodic policy review checklist to release/deployment workflows.
 
@@ -146,3 +146,6 @@ Remaining:
 1. Expand automated test coverage depth (parser fixtures, monitor session branches, API negative cases).
 2. Introduce authentication and identity-bound ownership checks.
 3. Wire concrete alert automation and centralized metrics scraping for worker/API.
+
+
+

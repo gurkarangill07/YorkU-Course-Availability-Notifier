@@ -1,4 +1,4 @@
-function parseIntEnv(value, fallback) {
+﻿function parseIntEnv(value, fallback) {
   const parsed = Number.parseInt(value, 10);
   if (Number.isNaN(parsed)) {
     return fallback;
@@ -22,6 +22,267 @@ function parseBoolEnv(value, fallback) {
     return false;
   }
   return fallback;
+}
+
+const BOOLEAN_ENV_VALUES = new Set([
+  "1",
+  "0",
+  "true",
+  "false",
+  "yes",
+  "no",
+  "y",
+  "n",
+  "on",
+  "off"
+]);
+
+function normalizeEnvString(value) {
+  return String(value || "").trim();
+}
+
+function isNonEmptyEnvValue(value) {
+  return normalizeEnvString(value) !== "";
+}
+
+function validateBooleanEnv(name, sourceEnv, errors) {
+  if (!(name in sourceEnv)) {
+    return;
+  }
+  const raw = normalizeEnvString(sourceEnv[name]);
+  if (!raw) {
+    errors.push(`${name} must be a boolean value (true/false).`);
+    return;
+  }
+  const normalized = raw.toLowerCase();
+  if (!BOOLEAN_ENV_VALUES.has(normalized)) {
+    errors.push(
+      `${name} must be one of: true, false, 1, 0, yes, no, on, off.`
+    );
+  }
+}
+
+function validateIntEnv(name, sourceEnv, { min, max } = {}, errors) {
+  if (!(name in sourceEnv)) {
+    return;
+  }
+  const raw = normalizeEnvString(sourceEnv[name]);
+  if (!raw) {
+    errors.push(`${name} must be a whole number.`);
+    return;
+  }
+  if (!/^-?\d+$/.test(raw)) {
+    errors.push(`${name} must be a whole number.`);
+    return;
+  }
+  const parsed = Number.parseInt(raw, 10);
+  if (!Number.isFinite(parsed)) {
+    errors.push(`${name} must be a whole number.`);
+    return;
+  }
+  if (min !== undefined && parsed < min) {
+    errors.push(`${name} must be at least ${min}.`);
+  }
+  if (max !== undefined && parsed > max) {
+    errors.push(`${name} must be at most ${max}.`);
+  }
+}
+
+function validateEnumEnv(name, sourceEnv, allowedValues, errors) {
+  if (!(name in sourceEnv)) {
+    return;
+  }
+  const raw = normalizeEnvString(sourceEnv[name]);
+  if (!raw) {
+    errors.push(`${name} must be one of: ${allowedValues.join(", ")}.`);
+    return;
+  }
+  const normalized = raw.toLowerCase();
+  if (!allowedValues.includes(normalized)) {
+    errors.push(`${name} must be one of: ${allowedValues.join(", ")}.`);
+  }
+}
+
+function validateUrlEnv(name, sourceEnv, errors) {
+  if (!(name in sourceEnv)) {
+    return;
+  }
+  const raw = normalizeEnvString(sourceEnv[name]);
+  if (!raw) {
+    errors.push(`${name} must be a valid URL.`);
+    return;
+  }
+  try {
+    const parsed = new URL(raw);
+    if (!["http:", "https:"].includes(parsed.protocol)) {
+      errors.push(`${name} must be an http or https URL.`);
+    }
+  } catch (_error) {
+    errors.push(`${name} must be a valid URL.`);
+  }
+}
+
+function requireEnv(name, sourceEnv, errors) {
+  if (!isNonEmptyEnvValue(sourceEnv[name])) {
+    errors.push(`Missing required environment variable: ${name}`);
+  }
+}
+
+function warnIfMissing(name, sourceEnv, warnings, message) {
+  if (!isNonEmptyEnvValue(sourceEnv[name])) {
+    warnings.push(message || `${name} is recommended but not set.`);
+  }
+}
+
+function resolveSourceMode(sourceEnv) {
+  return normalizeEnvString(sourceEnv.VSB_SOURCE_MODE || "db").toLowerCase();
+}
+
+function formatConfigValidationErrors(errors) {
+  if (!errors || errors.length === 0) {
+    return "";
+  }
+  return ["Config validation failed:", ...errors.map((msg) => `- ${msg}`)].join(
+    "\n"
+  );
+}
+
+function validateRuntimeConfig({ env = process.env, runtime, mode } = {}) {
+  const errors = [];
+  const warnings = [];
+  const normalizedRuntime = normalizeEnvString(runtime).toLowerCase();
+
+  if (!normalizedRuntime) {
+    errors.push("Runtime is required. Use \"api\" or \"worker\".");
+    return { errors, warnings };
+  }
+
+  if (!["api", "worker"].includes(normalizedRuntime)) {
+    errors.push(`Unknown runtime "${runtime}". Use "api" or "worker".`);
+    return { errors, warnings };
+  }
+
+  requireEnv("DATABASE_URL", env, errors);
+
+  validateIntEnv("MONITOR_INTERVAL_SECONDS", env, { min: 1 }, errors);
+  validateIntEnv("MIN_POLL_INTERVAL_SECONDS", env, { min: 1 }, errors);
+  validateBooleanEnv("MONITOR_EMERGENCY_DISABLE", env, errors);
+  validateIntEnv("SESSION_DURATION_MINUTES", env, { min: 1 }, errors);
+  validateIntEnv("VSB_REFRESH_INTERVAL_MINUTES", env, { min: 1 }, errors);
+  validateIntEnv("VSB_CHECKBOX_TIMEOUT_MS", env, { min: 1 }, errors);
+  validateIntEnv("VSB_SYNC_TRACKED_COURSES_LIMIT", env, { min: 1 }, errors);
+  validateIntEnv("VSB_POST_LOGIN_WAIT_MS", env, { min: 0 }, errors);
+  validateIntEnv("VSB_SEARCH_TIMEOUT_MS", env, { min: 1 }, errors);
+  validateIntEnv("VSB_DROPDOWN_TIMEOUT_MS", env, { min: 1 }, errors);
+  validateIntEnv("VSB_CAPTURE_WAIT_MS", env, { min: 0 }, errors);
+  validateIntEnv("VSB_LOGIN_WAIT_SECONDS", env, { min: 1 }, errors);
+  validateIntEnv("NOTIFICATION_RETRY_BASE_SECONDS", env, { min: 1 }, errors);
+  validateIntEnv("NOTIFICATION_RETRY_MAX_SECONDS", env, { min: 1 }, errors);
+  validateIntEnv("NOTIFICATION_MAX_ATTEMPTS", env, { min: 1 }, errors);
+  validateIntEnv(
+    "NOTIFICATION_SUPPRESSION_WINDOW_MINUTES",
+    env,
+    { min: 0 },
+    errors
+  );
+  validateIntEnv("NOTIFICATION_DISPATCH_BATCH_SIZE", env, { min: 1 }, errors);
+  validateIntEnv("NOTIFICATION_DISPATCH_LEASE_SECONDS", env, { min: 1 }, errors);
+  validateIntEnv("INVALID_CODE_MAX_ATTEMPTS", env, { min: 1 }, errors);
+  validateIntEnv("AUTH_OTP_TTL_MINUTES", env, { min: 1 }, errors);
+  validateIntEnv("AUTH_OTP_RESEND_COOLDOWN_SECONDS", env, { min: 1 }, errors);
+  validateIntEnv("AUTH_OTP_MAX_FAILED_ATTEMPTS", env, { min: 1 }, errors);
+  validateIntEnv("AUTH_SESSION_DAYS", env, { min: 1 }, errors);
+  validateIntEnv("WORKER_HEALTH_MAX_STALE_SECONDS", env, { min: 1 }, errors);
+  validateIntEnv("PORT", env, { min: 1, max: 65535 }, errors);
+  validateIntEnv("SMTP_PORT", env, { min: 1, max: 65535 }, errors);
+  validateIntEnv("DB_COMPATIBILITY_RETRY_ATTEMPTS", env, { min: 1 }, errors);
+  validateIntEnv("DB_COMPATIBILITY_RETRY_DELAY_MS", env, { min: 1 }, errors);
+
+  validateBooleanEnv("VSB_HEADLESS", env, errors);
+  validateBooleanEnv("VSB_SYNC_TRACKED_COURSES_ON_START", env, errors);
+  validateBooleanEnv("VSB_AUTO_RELOGIN_ENABLED", env, errors);
+  validateBooleanEnv("SMTP_SECURE", env, errors);
+  validateBooleanEnv("AUTH_COOKIE_SECURE", env, errors);
+  validateBooleanEnv("PG_SSL_REJECT_UNAUTHORIZED", env, errors);
+
+  validateEnumEnv("VSB_SOURCE_MODE", env, ["browser", "filesystem", "db"], errors);
+
+
+  if (normalizedRuntime === "api") {
+    requireEnv("OTP_PEPPER", env, errors);
+    requireEnv("SMTP_USER", env, errors);
+    const hasAuthPass = isNonEmptyEnvValue(env.SMTP_PASS_AUTH);
+    const hasFallbackPass = isNonEmptyEnvValue(env.SMTP_PASS);
+    if (!hasAuthPass && !hasFallbackPass) {
+      errors.push("SMTP_PASS_AUTH (or SMTP_PASS) is required for OTP email.");
+    }
+    if (!hasAuthPass && hasFallbackPass) {
+      warnings.push(
+        "SMTP_PASS_AUTH is not set; OTP email will reuse SMTP_PASS."
+      );
+    }
+    warnIfMissing(
+      "SMTP_FROM",
+      env,
+      warnings,
+      "SMTP_FROM is recommended to avoid ambiguous sender addresses."
+    );
+    if (isNonEmptyEnvValue(env.APP_BASE_URL)) {
+      validateUrlEnv("APP_BASE_URL", env, errors);
+    }
+    if (!isNonEmptyEnvValue(env.APP_BASE_URL)) {
+      warnings.push(
+        "APP_BASE_URL is not set; notification links will default to http://localhost:3000."
+      );
+    }
+  }
+
+  if (normalizedRuntime === "worker") {
+    const normalizedMode = normalizeEnvString(mode).toLowerCase();
+    const requiresNotifications =
+      !normalizedMode || ["loop", "once", "check_new_course"].includes(normalizedMode);
+
+    if (requiresNotifications) {
+      requireEnv("SMTP_USER", env, errors);
+      requireEnv("SMTP_PASS", env, errors);
+      requireEnv("APP_BASE_URL", env, errors);
+      warnIfMissing(
+        "SMTP_FROM",
+        env,
+        warnings,
+        "SMTP_FROM is recommended to avoid ambiguous sender addresses."
+      );
+      if (isNonEmptyEnvValue(env.APP_BASE_URL)) {
+        validateUrlEnv("APP_BASE_URL", env, errors);
+      }
+    }
+
+    const sourceMode = resolveSourceMode(env);
+    if (sourceMode === "browser") {
+      requireEnv("VSB_URL", env, errors);
+      if (isNonEmptyEnvValue(env.VSB_URL)) {
+        validateUrlEnv("VSB_URL", env, errors);
+      }
+      const autoReloginEnabled = parseBoolEnv(
+        env.VSB_AUTO_RELOGIN_ENABLED,
+        true
+      );
+      if (
+        autoReloginEnabled &&
+        (!isNonEmptyEnvValue(env.VSB_LOGIN_USERNAME) ||
+          !isNonEmptyEnvValue(env.VSB_LOGIN_PASSWORD))
+      ) {
+        warnings.push(
+          "VSB_AUTO_RELOGIN_ENABLED is true but VSB_LOGIN_USERNAME/VSB_LOGIN_PASSWORD are missing; auto relogin will be skipped."
+        );
+      }
+    }
+    if (sourceMode === "filesystem") {
+      requireEnv("JSP_SOURCE_DIR", env, errors);
+    }
+  }
+
+  return { errors, warnings };
 }
 
 function readRequiredEnv(name, sourceEnv = process.env) {
@@ -191,5 +452,14 @@ function loadConfig(sourceEnv = process.env) {
 }
 
 module.exports = {
-  loadConfig
+  loadConfig,
+  validateRuntimeConfig,
+  formatConfigValidationErrors
 };
+
+
+
+
+
+
+
