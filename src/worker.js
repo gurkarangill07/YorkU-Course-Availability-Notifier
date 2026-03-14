@@ -1,4 +1,8 @@
-﻿const { loadConfig, validateRuntimeConfig, formatConfigValidationErrors } = require("./config");
+const {
+  loadConfig,
+  validateRuntimeConfig,
+  formatConfigValidationErrors
+} = require("./config");
 const { createDb } = require("./db");
 const notifier = require("./notification");
 const { createVsbSource } = require("./vsbSource");
@@ -398,5 +402,3 @@ module.exports = {
   resolveEmergencyDisableState,
   run
 };
-
-

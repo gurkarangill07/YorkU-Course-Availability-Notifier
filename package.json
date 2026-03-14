@@ -1,4 +1,4 @@
-﻿{
+{
   "name": "coursenotif-monitor",
   "version": "0.1.0",
   "private": true,
@@ -30,4 +30,3 @@
     "playwright": "^1.51.1"
   }
 }
-

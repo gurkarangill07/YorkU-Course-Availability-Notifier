@@ -1,4 +1,4 @@
-﻿# CourseNotif Roadmap (Implementation-Aligned)
+# CourseNotif Roadmap (Implementation-Aligned)
 
 Last updated: March 14, 2026
 
@@ -146,6 +146,3 @@ Remaining:
 1. Expand automated test coverage depth (parser fixtures, monitor session branches, API negative cases).
 2. Introduce authentication and identity-bound ownership checks.
 3. Wire concrete alert automation and centralized metrics scraping for worker/API.
-
-
-

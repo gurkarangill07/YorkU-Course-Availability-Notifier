@@ -1,4 +1,4 @@
-﻿const {
+const {
   validateRuntimeConfig,
   formatConfigValidationErrors
 } = require("../src/config");
@@ -17,7 +17,10 @@ function readFlagValue(args, name) {
 
 function printUsage() {
   console.log("Usage: node scripts/validate-config.js --runtime <api|worker|all>");
-  console.log("You can also set CONFIG_RUNTIME instead of passing --runtime.");
+  console.log("Optional: pass --mode <worker-mode> for worker-specific validation.");
+  console.log(
+    "You can also set CONFIG_RUNTIME and CONFIG_MODE instead of passing flags."
+  );
 }
 
 const args = process.argv.slice(2);
@@ -27,15 +30,22 @@ if (args.includes("--help") || args.includes("-h")) {
 }
 
 const runtimeArg = readFlagValue(args, "--runtime");
+const modeArg = readFlagValue(args, "--mode");
 const runtimeEnv = String(process.env.CONFIG_RUNTIME || "").trim();
+const modeEnv = String(process.env.CONFIG_MODE || "").trim();
 const runtime = runtimeArg || runtimeEnv || "all";
+const mode = modeArg || modeEnv || "";
 const runtimes = runtime === "all" ? ["api", "worker"] : [runtime];
 
 const errors = [];
 const warnings = [];
 
 for (const runtimeName of runtimes) {
-  const result = validateRuntimeConfig({ env: process.env, runtime: runtimeName });
+  const result = validateRuntimeConfig({
+    env: process.env,
+    runtime: runtimeName,
+    mode: runtimeName === "worker" ? mode : ""
+  });
   for (const message of result.errors) {
     errors.push(`[${runtimeName}] ${message}`);
   }
@@ -54,4 +64,5 @@ if (errors.length > 0) {
   process.exit(1);
 }
 
-console.log(`Config validation passed for: ${runtimes.join(", ")}`);
+const modeSuffix = mode ? ` (mode: ${mode})` : "";
+console.log(`Config validation passed for: ${runtimes.join(", ")}${modeSuffix}`);

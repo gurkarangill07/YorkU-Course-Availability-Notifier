@@ -1,4 +1,4 @@
-﻿const express = require("express");
+const express = require("express");
 const crypto = require("crypto");
 const path = require("path");
 const { loadConfig, validateRuntimeConfig, formatConfigValidationErrors } = require("./config");
@@ -748,4 +748,3 @@ if (require.main === module) {
     process.exit(1);
   });
 }
-

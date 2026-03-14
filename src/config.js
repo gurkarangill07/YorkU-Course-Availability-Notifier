@@ -1,4 +1,4 @@
-﻿function parseIntEnv(value, fallback) {
+function parseIntEnv(value, fallback) {
   const parsed = Number.parseInt(value, 10);
   if (Number.isNaN(parsed)) {
     return fallback;
@@ -240,7 +240,18 @@ function validateRuntimeConfig({ env = process.env, runtime, mode } = {}) {
   if (normalizedRuntime === "worker") {
     const normalizedMode = normalizeEnvString(mode).toLowerCase();
     const requiresNotifications =
-      !normalizedMode || ["loop", "once", "check_new_course"].includes(normalizedMode);
+      !normalizedMode ||
+      ["loop", "once", "check_new_course"].includes(normalizedMode);
+    const requiresBrowserSessionInit =
+      normalizedMode === "init_login" ||
+      normalizedMode === "init_login_keep_open";
+    const sourceMode = resolveSourceMode(env);
+
+    if (requiresBrowserSessionInit && sourceMode !== "browser") {
+      errors.push(
+        "VSB_SOURCE_MODE must be browser when using init-login modes."
+      );
+    }
 
     if (requiresNotifications) {
       requireEnv("SMTP_USER", env, errors);
@@ -257,7 +268,6 @@ function validateRuntimeConfig({ env = process.env, runtime, mode } = {}) {
       }
     }
 
-    const sourceMode = resolveSourceMode(env);
     if (sourceMode === "browser") {
       requireEnv("VSB_URL", env, errors);
       if (isNonEmptyEnvValue(env.VSB_URL)) {
@@ -456,10 +466,3 @@ module.exports = {
   validateRuntimeConfig,
   formatConfigValidationErrors
 };
-
-
-
-
-
-
-

@@ -1,5 +1,7 @@
-﻿const test = require("node:test");
+const test = require("node:test");
 const assert = require("node:assert/strict");
+const path = require("node:path");
+const { spawnSync } = require("node:child_process");
 const { validateRuntimeConfig } = require("../src/config");
 
 const BASE_ENV = {
@@ -43,13 +45,19 @@ test("validateRuntimeConfig: api allows SMTP_PASS fallback for OTP", () => {
 });
 
 test("validateRuntimeConfig: worker requires SMTP only in monitoring modes", () => {
-  const result = validate("worker", {
-    SMTP_USER: "",
-    SMTP_PASS: "",
-    APP_BASE_URL: ""
-  }, {
-    mode: "init_login"
-  });
+  const result = validate(
+    "worker",
+    {
+      SMTP_USER: "",
+      SMTP_PASS: "",
+      APP_BASE_URL: "",
+      VSB_SOURCE_MODE: "browser",
+      VSB_URL: "https://vsb.example.com"
+    },
+    {
+      mode: "init_login"
+    }
+  );
   assertNoErrors(result);
 });
 
@@ -74,6 +82,19 @@ test("validateRuntimeConfig: worker browser mode requires VSB_URL", () => {
   assert.ok(result.errors.some((msg) => msg.includes("VSB_URL")));
 });
 
+test("validateRuntimeConfig: init-login requires browser source mode", () => {
+  const result = validate(
+    "worker",
+    {
+      VSB_SOURCE_MODE: "db"
+    },
+    {
+      mode: "init_login"
+    }
+  );
+  assert.ok(result.errors.some((msg) => msg.includes("VSB_SOURCE_MODE")));
+});
+
 test("validateRuntimeConfig: filesystem mode requires JSP_SOURCE_DIR", () => {
   const result = validate("worker", {
     VSB_SOURCE_MODE: "filesystem",
@@ -87,3 +108,27 @@ test("validateRuntimeConfig: invalid PORT is rejected", () => {
   assert.ok(result.errors.some((msg) => msg.includes("PORT")));
 });
 
+test("config validate script supports worker init_login mode", () => {
+  const scriptPath = path.join(__dirname, "..", "scripts", "validate-config.js");
+  const result = spawnSync(
+    process.execPath,
+    [scriptPath, "--runtime", "worker", "--mode", "init_login"],
+    {
+      cwd: path.join(__dirname, ".."),
+      encoding: "utf8",
+      env: {
+        ...process.env,
+        DATABASE_URL: "postgresql://user:pass@localhost:5432/coursenotif",
+        VSB_SOURCE_MODE: "browser",
+        VSB_URL: "https://vsb.example.com",
+        SMTP_USER: "",
+        SMTP_PASS: "",
+        APP_BASE_URL: ""
+      }
+    }
+  );
+
+  assert.equal(result.status, 0);
+  assert.match(result.stdout, /Config validation passed/);
+  assert.doesNotMatch(result.stderr, /SMTP_USER|SMTP_PASS|APP_BASE_URL/);
+});

@@ -1,4 +1,4 @@
-﻿# CourseNotif Deployment Checklist
+# CourseNotif Deployment Checklist
 
 Last updated: March 14, 2026
 
@@ -9,7 +9,7 @@ Last updated: March 14, 2026
 3. Confirm required envs for the target runtime. API should only receive DATABASE_URL, OTP_PEPPER, SMTP_PASS_AUTH, SMTP_HOST/PORT/SECURE, SMTP_USER, SMTP_FROM, APP_BASE_URL, and optional METRICS_BEARER_TOKEN. Worker should only receive DATABASE_URL, SMTP_PASS, SMTP_HOST/PORT/SECURE, SMTP_USER, SMTP_FROM, APP_BASE_URL, and VSB_* when browser mode is enabled.
 4. Run `npm run ci` for the release candidate.
 5. Apply schema: `psql "$DATABASE_URL" -f db/schema.sql`.
-6. Run config validation for each runtime (CONFIG_RUNTIME=api npm run config:validate and CONFIG_RUNTIME=worker npm run config:validate). This covers policy values like MIN_POLL_INTERVAL_SECONDS, MONITOR_EMERGENCY_DISABLE, MONITOR_EMERGENCY_REASON.
+6. Run config validation for each runtime (`CONFIG_RUNTIME=api npm run config:validate` and `CONFIG_RUNTIME=worker npm run config:validate`). For mode-specific worker checks such as init-login, set `CONFIG_MODE=init_login`. This covers policy values like MIN_POLL_INTERVAL_SECONDS, MONITOR_EMERGENCY_DISABLE, MONITOR_EMERGENCY_REASON.
 
 ## Deploy
 
@@ -33,5 +33,3 @@ Last updated: March 14, 2026
 
 1. Update the secret rotation log with date and owner.
 2. Update docs/ROADMAP.md, README.md, and context if runtime behavior changed.
-
-
