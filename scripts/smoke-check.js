@@ -3,13 +3,26 @@ const path = require("node:path");
 const vm = require("node:vm");
 
 const srcDir = path.join(__dirname, "..", "src");
-const entries = fs.readdirSync(srcDir, { withFileTypes: true });
-const jsFiles = entries
-  .filter((entry) => entry.isFile() && entry.name.endsWith(".js"))
-  .map((entry) => path.join(srcDir, entry.name));
+const jsFiles = [];
+
+function collectJsFiles(dirPath) {
+  const entries = fs.readdirSync(dirPath, { withFileTypes: true });
+  for (const entry of entries) {
+    const entryPath = path.join(dirPath, entry.name);
+    if (entry.isDirectory()) {
+      collectJsFiles(entryPath);
+      continue;
+    }
+    if (entry.isFile() && entry.name.endsWith(".js")) {
+      jsFiles.push(entryPath);
+    }
+  }
+}
+
+collectJsFiles(srcDir);
 
 if (jsFiles.length === 0) {
-  console.log("No src/*.js files found for smoke check.");
+  console.log("No src/**/*.js files found for smoke check.");
   process.exit(0);
 }
 
