@@ -40,8 +40,11 @@ Last updated: March 14, 2026
   - `GET /api/metrics` (optional bearer auth)
   - `GET /api/worker-health` (optional bearer auth)
   - `GET /api/auth/me`
+  - `GET /api/auth/sessions` (auth required)
   - `POST /api/auth/send-otp`
   - `POST /api/auth/verify-otp`
+  - `POST /api/auth/logout-others` (auth required)
+  - `POST /api/auth/sessions/:id/revoke` (auth required)
   - `POST /api/auth/logout`
   - `GET /api/tracked-courses` (auth required)
   - `POST /api/tracked-courses` (auth required)
@@ -50,6 +53,10 @@ Last updated: March 14, 2026
   - `DELETE /api/tracked-courses/:id` (auth required)
 - `POST /api/tracked-courses` auto-resumes rows currently in `paused`/`notified`/`invalid` state
 - Tracked-course responses include status/detail fields (`trackingStatus`, `notifiedAt`, `invalidAttempts`, `invalidNotifiedAt`, `lastCheckedAt`, `lastObservedOs`, `requiresFreshScan`)
+- Auth hardening now includes:
+  - route-level rate limiting on OTP endpoints
+  - authenticated write throttling on tracked-course and session-revocation endpoints
+  - session activity tracking + per-session revocation APIs
 - Serves `index.html` at `GET /`
 
 3. Frontend
@@ -58,6 +65,8 @@ Last updated: March 14, 2026
   - passwordless email OTP sign-in
   - resend OTP with cooldown
   - logout
+  - session list + revoke controls for non-current sessions
+  - sign out other sessions in one action
   - adding tracked courses
   - optional custom course name
   - listing tracked courses with tracking status text
@@ -65,6 +74,7 @@ Last updated: March 14, 2026
   - stop tracking
   - resume tracking (`Track Again`) for `paused`/`notified`/`invalid` states
   - automatic tracked-course refresh while signed in
+- Session-invalid/revoked 401s now clear local UI auth state and prompt re-login
 - Course code input is normalized on the client (uppercase alphanumeric, max 6 chars) with inline validation guidance
 - Auto-logout-on-tab-close hook exists but is disabled by default (`AUTO_LOGOUT_ON_TAB_CLOSE=false`)
 
@@ -145,7 +155,7 @@ Last updated: March 14, 2026
   - policy controls tests (`test/policyControls.test.js`)
 - CI workflow exists at `.github/workflows/ci.yml`
 - CI runs smoke + tests on pull requests and pushes to `main`
-- Current `ahmed/work` branch is green on local CI gate after fixes
+- Current `main` branch was green on local smoke/test checks before this auth-hardening pass
 
 9. Observability
 - Structured logging utility exists in `src/logger.js`
@@ -168,6 +178,15 @@ Last updated: March 14, 2026
 - `PG_SSL_REJECT_UNAUTHORIZED=false` is supported for hosted Postgres setups that require relaxed TLS verification
 - `APP_BASE_URL` controls links used in email templates
 - `INVALID_CODE_MAX_ATTEMPTS` controls invalid-code threshold before marking a course invalid
+- Auth hardening envs are supported:
+  - `AUTH_RATE_LIMIT_WINDOW_SECONDS`
+  - `AUTH_SEND_OTP_MAX_PER_IP`
+  - `AUTH_SEND_OTP_MAX_PER_EMAIL`
+  - `AUTH_VERIFY_OTP_MAX_PER_IP`
+  - `AUTH_VERIFY_OTP_MAX_PER_EMAIL`
+  - `AUTH_VERIFY_OTP_LOCKOUT_SECONDS`
+  - `AUTHENTICATED_WRITE_RATE_LIMIT_WINDOW_SECONDS`
+  - `AUTHENTICATED_WRITE_RATE_LIMIT_MAX`
 - Observability envs are supported:
   - `LOG_LEVEL`
   - `LOG_FORMAT`
@@ -221,7 +240,7 @@ Last updated: March 14, 2026
 
 1. Add browser-mode integration tests for session recovery and invalid-code paths
 2. Improve notification-attempt visibility (UI or admin API)
-3. Add clearer UI messaging for auth/session failure recovery paths (beyond generic alerts)
+3. Add a distributed/shared rate-limit backend if auth traffic needs to scale beyond one API instance
 4. Add centralized alert routing/dashboard automation on top of current observability baseline
 
 ## 6) Notes for future contributors/agents

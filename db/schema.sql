@@ -37,8 +37,18 @@ CREATE TABLE IF NOT EXISTS auth_sessions (
   token_hash TEXT NOT NULL UNIQUE,
   expires_at TIMESTAMPTZ NOT NULL,
   revoked_at TIMESTAMPTZ,
-  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  last_seen_at TIMESTAMPTZ,
+  last_ip TEXT,
+  user_agent TEXT
 );
+
+ALTER TABLE auth_sessions
+  ADD COLUMN IF NOT EXISTS last_seen_at TIMESTAMPTZ;
+ALTER TABLE auth_sessions
+  ADD COLUMN IF NOT EXISTS last_ip TEXT;
+ALTER TABLE auth_sessions
+  ADD COLUMN IF NOT EXISTS user_agent TEXT;
 
 CREATE TABLE IF NOT EXISTS courses (
   cart_id TEXT PRIMARY KEY,

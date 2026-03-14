@@ -128,6 +128,87 @@ function generateSessionToken() {
   return crypto.randomBytes(32).toString("base64url");
 }
 
+function getRequestIp(req) {
+  if (req && typeof req.ip === "string" && req.ip.trim()) {
+    return req.ip.trim();
+  }
+  if (req && req.socket && typeof req.socket.remoteAddress === "string") {
+    return req.socket.remoteAddress.trim() || "unknown";
+  }
+  return "unknown";
+}
+
+function createFixedWindowLimiter({
+  windowMs,
+  maxRequests,
+  blockDurationMs = 0
+}) {
+  const entries = new Map();
+
+  function prune(now) {
+    for (const [key, entry] of entries.entries()) {
+      const windowExpired = entry.windowStartedAt + windowMs <= now;
+      const blockExpired = !entry.blockedUntil || entry.blockedUntil <= now;
+      if (windowExpired && blockExpired) {
+        entries.delete(key);
+      }
+    }
+  }
+
+  return {
+    consume(key) {
+      if (!key) {
+        return { allowed: true };
+      }
+
+      const now = Date.now();
+      if (entries.size > 500) {
+        prune(now);
+      }
+
+      let entry = entries.get(key);
+      if (entry && entry.blockedUntil && entry.blockedUntil > now) {
+        return {
+          allowed: false,
+          retryAfterSeconds: Math.max(
+            1,
+            Math.ceil((entry.blockedUntil - now) / 1000)
+          )
+        };
+      }
+
+      if (!entry || entry.windowStartedAt + windowMs <= now) {
+        entry = {
+          count: 0,
+          windowStartedAt: now,
+          blockedUntil: 0
+        };
+      }
+
+      entry.count += 1;
+      entries.set(key, entry);
+
+      if (entry.count <= maxRequests) {
+        return { allowed: true };
+      }
+
+      const retryAfterMs =
+        blockDurationMs > 0
+          ? blockDurationMs
+          : Math.max(1000, entry.windowStartedAt + windowMs - now);
+      if (blockDurationMs > 0) {
+        entry.blockedUntil = now + blockDurationMs;
+        entries.set(key, entry);
+      }
+
+      return {
+        allowed: false,
+        retryAfterSeconds: Math.max(1, Math.ceil(retryAfterMs / 1000))
+      };
+    }
+  };
+}
+
 function mapTrackedCourseRow(row) {
   const os = toNullableFiniteNumber(row.os);
   const lastObservedOs = toNullableFiniteNumber(row.last_observed_os);
@@ -146,6 +227,19 @@ function mapTrackedCourseRow(row) {
     invalidNotifiedAt: row.invalid_notified_at || null,
     requiresFreshScan: Boolean(row.requires_fresh_scan),
     createdAt: row.created_at
+  };
+}
+
+function mapAuthSessionRow(row, currentSessionId) {
+  return {
+    id: Number(row.id),
+    current: Number(row.id) === Number(currentSessionId),
+    createdAt: row.created_at,
+    lastSeenAt: row.last_seen_at || row.created_at,
+    expiresAt: row.expires_at,
+    revokedAt: row.revoked_at || null,
+    lastIp: row.last_ip || null,
+    userAgent: row.user_agent || null
   };
 }
 
@@ -179,6 +273,60 @@ function createApiApp({
     env.WORKER_HEALTH_MAX_STALE_SECONDS,
     300
   );
+  const authRateLimitWindowMs =
+    parseIntWithFallback(env.AUTH_RATE_LIMIT_WINDOW_SECONDS, 600) * 1000;
+  const authSendOtpMaxPerIp = parseIntWithFallback(env.AUTH_SEND_OTP_MAX_PER_IP, 5);
+  const authSendOtpMaxPerEmail = parseIntWithFallback(
+    env.AUTH_SEND_OTP_MAX_PER_EMAIL,
+    3
+  );
+  const authVerifyOtpMaxPerIp = parseIntWithFallback(
+    env.AUTH_VERIFY_OTP_MAX_PER_IP,
+    10
+  );
+  const authVerifyOtpMaxPerEmail = parseIntWithFallback(
+    env.AUTH_VERIFY_OTP_MAX_PER_EMAIL,
+    5
+  );
+  const authVerifyOtpLockoutMs =
+    parseIntWithFallback(env.AUTH_VERIFY_OTP_LOCKOUT_SECONDS, 900) * 1000;
+  const authenticatedWriteRateLimitWindowMs =
+    parseIntWithFallback(env.AUTHENTICATED_WRITE_RATE_LIMIT_WINDOW_SECONDS, 60) *
+    1000;
+  const authenticatedWriteRateLimitMax = parseIntWithFallback(
+    env.AUTHENTICATED_WRITE_RATE_LIMIT_MAX,
+    30
+  );
+  const sendOtpIpLimiter = createFixedWindowLimiter({
+    windowMs: authRateLimitWindowMs,
+    maxRequests: authSendOtpMaxPerIp,
+    blockDurationMs: authRateLimitWindowMs
+  });
+  const sendOtpEmailLimiter = createFixedWindowLimiter({
+    windowMs: authRateLimitWindowMs,
+    maxRequests: authSendOtpMaxPerEmail,
+    blockDurationMs: authRateLimitWindowMs
+  });
+  const verifyOtpIpLimiter = createFixedWindowLimiter({
+    windowMs: authRateLimitWindowMs,
+    maxRequests: authVerifyOtpMaxPerIp,
+    blockDurationMs: authVerifyOtpLockoutMs
+  });
+  const verifyOtpEmailLimiter = createFixedWindowLimiter({
+    windowMs: authRateLimitWindowMs,
+    maxRequests: authVerifyOtpMaxPerEmail,
+    blockDurationMs: authVerifyOtpLockoutMs
+  });
+  const authenticatedWriteUserLimiter = createFixedWindowLimiter({
+    windowMs: authenticatedWriteRateLimitWindowMs,
+    maxRequests: authenticatedWriteRateLimitMax,
+    blockDurationMs: authenticatedWriteRateLimitWindowMs
+  });
+  const authenticatedWriteIpLimiter = createFixedWindowLimiter({
+    windowMs: authenticatedWriteRateLimitWindowMs,
+    maxRequests: authenticatedWriteRateLimitMax,
+    blockDurationMs: authenticatedWriteRateLimitWindowMs
+  });
 
   app.use(express.json());
   app.use((req, res, next) => {
@@ -221,6 +369,101 @@ function createApiApp({
       });
     });
     next();
+  });
+
+  function createRateLimitMiddleware({
+    limiters,
+    event,
+    errorMessage
+  }) {
+    return (req, res, next) => {
+      for (const limiterConfig of limiters) {
+        const key = limiterConfig.key(req);
+        const result = limiterConfig.limiter.consume(key);
+        if (result.allowed) {
+          continue;
+        }
+
+        metrics.increment(
+          "api_rate_limit_rejections_total",
+          1,
+          "Total API requests rejected by route-level rate limiting."
+        );
+        logger.warn("request rate limited", {
+          event,
+          limiter: limiterConfig.name,
+          method: req.method,
+          path: req.path,
+          requestIp: getRequestIp(req),
+          keyHash: key ? hashSha256(key) : null,
+          retryAfterSeconds: result.retryAfterSeconds
+        });
+        res.set("Retry-After", String(result.retryAfterSeconds));
+        return res.status(429).json({
+          error: errorMessage,
+          retryAfterSeconds: result.retryAfterSeconds
+        });
+      }
+      return next();
+    };
+  }
+
+  const sendOtpRateLimit = createRateLimitMiddleware({
+    event: "api.auth.send_otp.rate_limited",
+    errorMessage: "Too many OTP requests. Please try again later.",
+    limiters: [
+      {
+        name: "auth_send_otp_ip",
+        limiter: sendOtpIpLimiter,
+        key: (req) => `ip:${getRequestIp(req)}`
+      },
+      {
+        name: "auth_send_otp_email",
+        limiter: sendOtpEmailLimiter,
+        key: (req) => {
+          const email = normalizeEmail(req.body && req.body.email);
+          return email ? `email:${email}` : null;
+        }
+      }
+    ]
+  });
+
+  const verifyOtpRateLimit = createRateLimitMiddleware({
+    event: "api.auth.verify_otp.rate_limited",
+    errorMessage: "Too many OTP verification attempts. Please try again later.",
+    limiters: [
+      {
+        name: "auth_verify_otp_ip",
+        limiter: verifyOtpIpLimiter,
+        key: (req) => `ip:${getRequestIp(req)}`
+      },
+      {
+        name: "auth_verify_otp_email",
+        limiter: verifyOtpEmailLimiter,
+        key: (req) => {
+          const email = normalizeEmail(req.body && req.body.email);
+          return email ? `email:${email}` : null;
+        }
+      }
+    ]
+  });
+
+  const authenticatedWriteRateLimit = createRateLimitMiddleware({
+    event: "api.authenticated_write.rate_limited",
+    errorMessage: "Too many write requests. Please slow down and try again.",
+    limiters: [
+      {
+        name: "authenticated_write_user",
+        limiter: authenticatedWriteUserLimiter,
+        key: (req) =>
+          req.auth && req.auth.userId ? `user:${req.auth.userId}` : null
+      },
+      {
+        name: "authenticated_write_ip",
+        limiter: authenticatedWriteIpLimiter,
+        key: (req) => `ip:${getRequestIp(req)}`
+      }
+    ]
   });
 
   function setAuthSessionCookie(res, sessionToken) {
@@ -272,7 +515,15 @@ function createApiApp({
       return null;
     }
 
+    if (typeof db.touchAuthSessionActivity === "function") {
+      await db.touchAuthSessionActivity({
+        tokenHash,
+        lastIp: getRequestIp(req)
+      });
+    }
+
     return {
+      sessionId: session.id,
       tokenHash,
       userId: session.user_id,
       email: session.email
@@ -283,6 +534,9 @@ function createApiApp({
     try {
       const auth = await resolveAuth(req);
       if (!auth) {
+        if (getSessionTokenFromRequest(req)) {
+          clearAuthSessionCookie(res);
+        }
         return res.status(401).json({ error: "Authentication required." });
       }
       req.auth = auth;
@@ -358,6 +612,9 @@ function createApiApp({
     try {
       const auth = await resolveAuth(req);
       if (!auth) {
+        if (getSessionTokenFromRequest(req)) {
+          clearAuthSessionCookie(res);
+        }
         return res.json({ authenticated: false });
       }
       return res.json({
@@ -372,70 +629,85 @@ function createApiApp({
     }
   });
 
-  app.post("/api/auth/send-otp", async (req, res, next) => {
+  app.get("/api/auth/sessions", requireAuth, async (req, res, next) => {
     try {
-      const email = normalizeEmail(req.body && req.body.email);
-      if (!email) {
-        return res.status(400).json({ error: "Valid email is required." });
-      }
-
-      await db.cleanupExpiredAuthRecords();
-      const latest = await db.getLatestOtpChallengeByEmail(email);
-      if (latest) {
-        const expiresAtMs = new Date(latest.expires_at).getTime();
-        const hasActiveChallenge =
-          !latest.consumed_at &&
-          Number.isFinite(expiresAtMs) &&
-          expiresAtMs > Date.now();
-
-        if (hasActiveChallenge) {
-          const createdAtMs = new Date(latest.created_at).getTime();
-          if (Number.isFinite(createdAtMs)) {
-            const elapsedSeconds = Math.floor((Date.now() - createdAtMs) / 1000);
-            const retryAfterSeconds = otpResendCooldownSeconds - elapsedSeconds;
-            if (retryAfterSeconds > 0) {
-              return res.status(429).json({
-                error: `Please wait ${retryAfterSeconds}s before requesting another OTP.`,
-                retryAfterSeconds
-              });
-            }
-          }
-        }
-      }
-
-      const otpCode = generateOtpCode();
-      const otpHash = hashOtpCode({ email, otp: otpCode });
-      const expiresAt = new Date(Date.now() + otpTtlMinutes * 60 * 1000);
-
-      await db.invalidateActiveOtpChallengesByEmail(email);
-      const challenge = await db.createOtpChallenge({
-        email,
-        otpHash,
-        expiresAt
-      });
-
-      try {
-        await notifierModule.sendLoginOtpEmail({
-          toEmail: email,
-          otpCode,
-          expiresMinutes: otpTtlMinutes
-        });
-      } catch (sendError) {
-        await db.markOtpChallengeConsumed(challenge.id);
-        throw sendError;
-      }
-
+      const items = await db.listAuthSessionsByUser(req.auth.userId);
       return res.json({
-        ok: true,
-        expiresInSeconds: otpTtlMinutes * 60,
-        resendAfterSeconds: otpResendCooldownSeconds
+        items: items.map((row) => mapAuthSessionRow(row, req.auth.sessionId))
       });
     } catch (error) {
       return next(error);
     }
   });
 
-  app.post("/api/auth/verify-otp", async (req, res, next) => {
+  app.post(
+    "/api/auth/send-otp",
+    sendOtpRateLimit,
+    async (req, res, next) => {
+      try {
+        const email = normalizeEmail(req.body && req.body.email);
+        if (!email) {
+          return res.status(400).json({ error: "Valid email is required." });
+        }
+
+        await db.cleanupExpiredAuthRecords();
+        const latest = await db.getLatestOtpChallengeByEmail(email);
+        if (latest) {
+          const expiresAtMs = new Date(latest.expires_at).getTime();
+          const hasActiveChallenge =
+            !latest.consumed_at &&
+            Number.isFinite(expiresAtMs) &&
+            expiresAtMs > Date.now();
+
+          if (hasActiveChallenge) {
+            const createdAtMs = new Date(latest.created_at).getTime();
+            if (Number.isFinite(createdAtMs)) {
+              const elapsedSeconds = Math.floor((Date.now() - createdAtMs) / 1000);
+              const retryAfterSeconds = otpResendCooldownSeconds - elapsedSeconds;
+              if (retryAfterSeconds > 0) {
+                return res.status(429).json({
+                  error: `Please wait ${retryAfterSeconds}s before requesting another OTP.`,
+                  retryAfterSeconds
+                });
+              }
+            }
+          }
+        }
+
+        const otpCode = generateOtpCode();
+        const otpHash = hashOtpCode({ email, otp: otpCode });
+        const expiresAt = new Date(Date.now() + otpTtlMinutes * 60 * 1000);
+
+        await db.invalidateActiveOtpChallengesByEmail(email);
+        const challenge = await db.createOtpChallenge({
+          email,
+          otpHash,
+          expiresAt
+        });
+
+        try {
+          await notifierModule.sendLoginOtpEmail({
+            toEmail: email,
+            otpCode,
+            expiresMinutes: otpTtlMinutes
+          });
+        } catch (sendError) {
+          await db.markOtpChallengeConsumed(challenge.id);
+          throw sendError;
+        }
+
+        return res.json({
+          ok: true,
+          expiresInSeconds: otpTtlMinutes * 60,
+          resendAfterSeconds: otpResendCooldownSeconds
+        });
+      } catch (error) {
+        return next(error);
+      }
+    }
+  );
+
+  app.post("/api/auth/verify-otp", verifyOtpRateLimit, async (req, res, next) => {
     try {
       const email = normalizeEmail(req.body && req.body.email);
       const otp = normalizeOtp(req.body && req.body.otp);
@@ -480,7 +752,9 @@ function createApiApp({
       await db.createAuthSession({
         userId: user.id,
         tokenHash: sessionTokenHash,
-        expiresAt: sessionExpiresAt
+        expiresAt: sessionExpiresAt,
+        lastIp: getRequestIp(req),
+        userAgent: String(req.headers["user-agent"] || "").trim() || null
       });
       setAuthSessionCookie(res, sessionToken);
 
@@ -495,6 +769,54 @@ function createApiApp({
       return next(error);
     }
   });
+
+  app.post(
+    "/api/auth/logout-others",
+    requireAuth,
+    authenticatedWriteRateLimit,
+    async (req, res, next) => {
+      try {
+        const revokedCount = await db.revokeOtherAuthSessionsForUser({
+          userId: req.auth.userId,
+          currentSessionId: req.auth.sessionId
+        });
+        return res.json({ ok: true, revokedCount });
+      } catch (error) {
+        return next(error);
+      }
+    }
+  );
+
+  app.post(
+    "/api/auth/sessions/:id/revoke",
+    requireAuth,
+    authenticatedWriteRateLimit,
+    async (req, res, next) => {
+      try {
+        const sessionId = Number.parseInt(req.params.id, 10);
+        if (!Number.isFinite(sessionId) || sessionId <= 0) {
+          return res.status(400).json({ error: "Valid session id is required." });
+        }
+        if (sessionId === Number(req.auth.sessionId)) {
+          return res.status(400).json({
+            error: "Use logout to sign out the current session."
+          });
+        }
+
+        const revoked = await db.revokeAuthSessionByIdForUser({
+          sessionId,
+          userId: req.auth.userId
+        });
+        if (!revoked) {
+          return res.status(404).json({ error: "Session not found." });
+        }
+
+        return res.json({ ok: true });
+      } catch (error) {
+        return next(error);
+      }
+    }
+  );
 
   app.post("/api/auth/logout", async (req, res, next) => {
     try {
@@ -519,128 +841,148 @@ function createApiApp({
     }
   });
 
-  app.post("/api/tracked-courses", requireAuth, async (req, res, next) => {
-    try {
-      const cartId = normalizeCartId(req.body && req.body.cartId);
-      const courseName = normalizeCourseName(req.body && req.body.courseName);
-      if (!cartId) {
-        return res.status(400).json({ error: "cartId is required." });
-      }
-      if (!isValidCartId(cartId)) {
-        return res.status(400).json({
-          error: "cartId must be exactly 6 characters using only A-Z and 0-9."
-        });
-      }
-
-      const userId = req.auth.userId;
-      const existing = await db.getTrackedCourseByUserAndCart(userId, cartId);
-      if (existing) {
-        if (courseName) {
-          await db.setUserCourseDisplayName({
-            userId,
-            cartId,
-            displayName: courseName
+  app.post(
+    "/api/tracked-courses",
+    requireAuth,
+    authenticatedWriteRateLimit,
+    async (req, res, next) => {
+      try {
+        const cartId = normalizeCartId(req.body && req.body.cartId);
+        const courseName = normalizeCourseName(req.body && req.body.courseName);
+        if (!cartId) {
+          return res.status(400).json({ error: "cartId is required." });
+        }
+        if (!isValidCartId(cartId)) {
+          return res.status(400).json({
+            error: "cartId must be exactly 6 characters using only A-Z and 0-9."
           });
         }
-        let resumed = false;
-        if (
-          existing.tracking_status === "notified" ||
-          existing.tracking_status === "invalid" ||
-          existing.tracking_status === "paused"
-        ) {
-          await db.resumeUserCourseForUser({
-            userCourseId: existing.user_course_id,
-            userId
+
+        const userId = req.auth.userId;
+        const existing = await db.getTrackedCourseByUserAndCart(userId, cartId);
+        if (existing) {
+          if (courseName) {
+            await db.setUserCourseDisplayName({
+              userId,
+              cartId,
+              displayName: courseName
+            });
+          }
+          let resumed = false;
+          if (
+            existing.tracking_status === "notified" ||
+            existing.tracking_status === "invalid" ||
+            existing.tracking_status === "paused"
+          ) {
+            await db.resumeUserCourseForUser({
+              userCourseId: existing.user_course_id,
+              userId
+            });
+            resumed = true;
+          }
+          const refreshed = await db.getTrackedCourseByUserAndCart(userId, cartId);
+          return res.status(200).json({
+            created: false,
+            resumed,
+            item: mapTrackedCourseRow(refreshed)
           });
-          resumed = true;
         }
-        const refreshed = await db.getTrackedCourseByUserAndCart(userId, cartId);
-        return res.status(200).json({
-          created: false,
-          resumed,
-          item: mapTrackedCourseRow(refreshed)
+
+        await db.ensureCourseExists(cartId);
+        await db.trackCourseForUser({
+          userId,
+          cartId,
+          displayName: courseName || null
         });
+        const tracked = await db.getTrackedCourseByUserAndCart(userId, cartId);
+
+        return res.status(201).json({
+          created: true,
+          item: mapTrackedCourseRow(tracked)
+        });
+      } catch (error) {
+        return next(error);
       }
-
-      await db.ensureCourseExists(cartId);
-      await db.trackCourseForUser({
-        userId,
-        cartId,
-        displayName: courseName || null
-      });
-      const tracked = await db.getTrackedCourseByUserAndCart(userId, cartId);
-
-      return res.status(201).json({
-        created: true,
-        item: mapTrackedCourseRow(tracked)
-      });
-    } catch (error) {
-      return next(error);
     }
-  });
+  );
 
-  app.post("/api/tracked-courses/:id/pause", requireAuth, async (req, res, next) => {
-    try {
-      const userCourseId = Number.parseInt(req.params.id, 10);
-      if (Number.isNaN(userCourseId) || userCourseId <= 0) {
-        return res.status(400).json({ error: "Valid user course id is required." });
+  app.post(
+    "/api/tracked-courses/:id/pause",
+    requireAuth,
+    authenticatedWriteRateLimit,
+    async (req, res, next) => {
+      try {
+        const userCourseId = Number.parseInt(req.params.id, 10);
+        if (Number.isNaN(userCourseId) || userCourseId <= 0) {
+          return res.status(400).json({ error: "Valid user course id is required." });
+        }
+
+        const updatedRows = await db.pauseUserCourseForUser({
+          userCourseId,
+          userId: req.auth.userId
+        });
+        if (!updatedRows) {
+          return res.status(404).json({ error: "Tracked course not found." });
+        }
+
+        return res.json({ ok: true });
+      } catch (error) {
+        return next(error);
       }
-
-      const updatedRows = await db.pauseUserCourseForUser({
-        userCourseId,
-        userId: req.auth.userId
-      });
-      if (!updatedRows) {
-        return res.status(404).json({ error: "Tracked course not found." });
-      }
-
-      return res.json({ ok: true });
-    } catch (error) {
-      return next(error);
     }
-  });
+  );
 
-  app.post("/api/tracked-courses/:id/resume", requireAuth, async (req, res, next) => {
-    try {
-      const userCourseId = Number.parseInt(req.params.id, 10);
-      if (Number.isNaN(userCourseId) || userCourseId <= 0) {
-        return res.status(400).json({ error: "Valid user course id is required." });
+  app.post(
+    "/api/tracked-courses/:id/resume",
+    requireAuth,
+    authenticatedWriteRateLimit,
+    async (req, res, next) => {
+      try {
+        const userCourseId = Number.parseInt(req.params.id, 10);
+        if (Number.isNaN(userCourseId) || userCourseId <= 0) {
+          return res.status(400).json({ error: "Valid user course id is required." });
+        }
+
+        const updatedRows = await db.resumeUserCourseForUser({
+          userCourseId,
+          userId: req.auth.userId
+        });
+        if (!updatedRows) {
+          return res.status(404).json({ error: "Tracked course not found." });
+        }
+
+        return res.json({ ok: true });
+      } catch (error) {
+        return next(error);
       }
-
-      const updatedRows = await db.resumeUserCourseForUser({
-        userCourseId,
-        userId: req.auth.userId
-      });
-      if (!updatedRows) {
-        return res.status(404).json({ error: "Tracked course not found." });
-      }
-
-      return res.json({ ok: true });
-    } catch (error) {
-      return next(error);
     }
-  });
+  );
 
-  app.delete("/api/tracked-courses/:id", requireAuth, async (req, res, next) => {
-    try {
-      const userCourseId = Number.parseInt(req.params.id, 10);
-      if (Number.isNaN(userCourseId) || userCourseId <= 0) {
-        return res.status(400).json({ error: "Valid user course id is required." });
+  app.delete(
+    "/api/tracked-courses/:id",
+    requireAuth,
+    authenticatedWriteRateLimit,
+    async (req, res, next) => {
+      try {
+        const userCourseId = Number.parseInt(req.params.id, 10);
+        if (Number.isNaN(userCourseId) || userCourseId <= 0) {
+          return res.status(400).json({ error: "Valid user course id is required." });
+        }
+
+        const deletedRows = await db.stopTrackingUserCourseForUser({
+          userCourseId,
+          userId: req.auth.userId
+        });
+        if (!deletedRows) {
+          return res.status(404).json({ error: "Tracked course not found." });
+        }
+
+        return res.status(204).send();
+      } catch (error) {
+        return next(error);
       }
-
-      const deletedRows = await db.stopTrackingUserCourseForUser({
-        userCourseId,
-        userId: req.auth.userId
-      });
-      if (!deletedRows) {
-        return res.status(404).json({ error: "Tracked course not found." });
-      }
-
-      return res.status(204).send();
-    } catch (error) {
-      return next(error);
     }
-  });
+  );
 
   app.get("/", (_req, res) => {
     res.sendFile(path.join(process.cwd(), "index.html"));

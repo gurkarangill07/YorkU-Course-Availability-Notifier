@@ -159,6 +159,53 @@
             margin-top: 8px;
         }
 
+        .section-header {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            gap: 12px;
+            margin-bottom: 8px;
+        }
+
+        .section-header label {
+            margin-bottom: 0;
+        }
+
+        .inline-btn {
+            width: auto;
+            padding: 8px 12px;
+            font-size: 0.85rem;
+            margin-top: 0;
+        }
+
+        .session-item {
+            display: flex;
+            justify-content: space-between;
+            align-items: flex-start;
+            gap: 12px;
+            padding: 12px 0;
+            border-bottom: 1px solid var(--border-color);
+        }
+
+        .session-item:last-child {
+            border-bottom: none;
+        }
+
+        .session-meta {
+            display: flex;
+            flex-direction: column;
+            gap: 4px;
+        }
+
+        .session-meta strong {
+            font-size: 0.95rem;
+        }
+
+        .session-meta span {
+            font-size: 0.85rem;
+            color: #6b7280;
+        }
+
         button:disabled,
         input:disabled {
             opacity: 0.6;
@@ -176,9 +223,14 @@
                 width: 100%;
             }
 
-            .item-actions button {
+            .item-actions button,
+            .section-header .inline-btn {
                 flex: 1;
                 width: auto;
+            }
+
+            .session-item {
+                flex-direction: column;
             }
         }
     </style>
@@ -219,10 +271,24 @@
                 <li class="empty-state">No tracked courses yet.</li>
             </ul>
         </div>
+
+        <!-- Section 4: Sessions -->
+        <div class="card hidden" id="sessionCard">
+            <div class="section-header">
+                <label>Sessions</label>
+                <button id="refreshSessionsBtn" class="secondary-btn inline-btn" onclick="refreshSessions()">Refresh</button>
+            </div>
+            <p class="muted">Review active sessions and revoke any session you do not recognize.</p>
+            <ul id="sessionList" class="course-list">
+                <li class="empty-state">Sign in to view sessions.</li>
+            </ul>
+            <button id="logoutOthersBtn" class="secondary-btn hidden" onclick="logoutOtherSessions()">Sign Out Other Sessions</button>
+        </div>
     </div>
 
     <script>
         let trackedCourses = [];
+        let authSessions = [];
         let authUser = null;
         let otpCooldownEndTs = 0;
         let otpCooldownIntervalId = null;
@@ -258,6 +324,9 @@
                 const error = new Error((data && data.error) || `Request failed (${response.status})`);
                 error.status = response.status;
                 error.data = data;
+                if (response.status === 401) {
+                    handleSessionInvalidation('Session expired or was revoked. Sign in again.');
+                }
                 throw error;
             }
             return data;
@@ -276,6 +345,53 @@
             document.getElementById('courseCode').disabled = !enabled;
             document.getElementById('courseName').disabled = !enabled;
             document.getElementById('trackBtn').disabled = !enabled;
+        }
+
+        function formatDateTime(value) {
+            if (!value) {
+                return 'Unknown';
+            }
+            const parsed = new Date(value);
+            if (Number.isNaN(parsed.getTime())) {
+                return 'Unknown';
+            }
+            return parsed.toLocaleString();
+        }
+
+        function summarizeUserAgent(userAgent) {
+            const ua = String(userAgent || '').trim();
+            if (!ua) {
+                return 'Unknown device';
+            }
+            if (/iphone/i.test(ua)) {
+                return 'iPhone';
+            }
+            if (/ipad/i.test(ua)) {
+                return 'iPad';
+            }
+            if (/android/i.test(ua)) {
+                return 'Android device';
+            }
+            if (/windows/i.test(ua)) {
+                return 'Windows browser';
+            }
+            if (/mac os x|macintosh/i.test(ua)) {
+                return 'Mac browser';
+            }
+            if (/linux/i.test(ua)) {
+                return 'Linux browser';
+            }
+            return ua.slice(0, 60);
+        }
+
+        function handleSessionInvalidation(message) {
+            authUser = null;
+            authSessions = [];
+            trackedCourses = [];
+            renderList();
+            renderSessions();
+            updateAuthUi();
+            setAuthStatus(message || 'Session expired or was revoked. Sign in again.');
         }
 
         function normalizeCourseCodeInput(value) {
@@ -308,6 +424,8 @@
             const sendOtpBtn = document.getElementById('sendOtpBtn');
             const logoutBtn = document.getElementById('logoutBtn');
             const resendOtpBtn = document.getElementById('resendOtpBtn');
+            const sessionCard = document.getElementById('sessionCard');
+            const logoutOthersBtn = document.getElementById('logoutOthersBtn');
 
             if (authUser) {
                 emailInput.value = authUser.email;
@@ -315,6 +433,8 @@
                 sendOtpBtn.classList.add('hidden');
                 setOtpSectionVisible(false);
                 logoutBtn.classList.remove('hidden');
+                sessionCard.classList.remove('hidden');
+                logoutOthersBtn.classList.remove('hidden');
                 setCourseActionsEnabled(true);
                 setAuthStatus(`Logged in as ${authUser.email}`);
                 startTrackedCoursesAutoRefresh();
@@ -323,6 +443,8 @@
                 emailInput.readOnly = false;
                 sendOtpBtn.classList.remove('hidden');
                 logoutBtn.classList.add('hidden');
+                sessionCard.classList.add('hidden');
+                logoutOthersBtn.classList.add('hidden');
                 setCourseActionsEnabled(false);
                 if (otpCooldownEndTs <= Date.now()) {
                     resendOtpBtn.disabled = false;
@@ -394,6 +516,28 @@
             return authUser;
         }
 
+        async function loadAuthSessions() {
+            if (!authUser) {
+                authSessions = [];
+                renderSessions();
+                return;
+            }
+
+            const data = await apiRequest('/api/auth/sessions');
+            authSessions = data.items || [];
+            renderSessions();
+        }
+
+        async function refreshSessions() {
+            try {
+                await loadAuthSessions();
+            } catch (error) {
+                if (error.status !== 401) {
+                    alert(error.message);
+                }
+            }
+        }
+
         async function loadTrackedCourses() {
             if (!authUser) {
                 trackedCourses = [];
@@ -458,6 +602,7 @@
                 });
                 otpInput.value = '';
                 await loadAuthSession();
+                await loadAuthSessions();
                 await loadTrackedCourses();
             } catch (error) {
                 alert(error.message);
@@ -471,10 +616,43 @@
                 // Even if logout fails, clear local auth state.
             }
             authUser = null;
+            authSessions = [];
             trackedCourses = [];
+            renderSessions();
             renderList();
             updateAuthUi();
             setAuthStatus('Signed out.');
+        }
+
+        async function logoutOtherSessions() {
+            if (!authUser) {
+                return;
+            }
+
+            try {
+                const result = await apiRequest('/api/auth/logout-others', {
+                    method: 'POST'
+                });
+                await loadAuthSessions();
+                alert(`Signed out ${result && Number(result.revokedCount || 0)} other session(s).`);
+            } catch (error) {
+                alert(error.message);
+            }
+        }
+
+        async function revokeSession(id) {
+            if (!authUser) {
+                return;
+            }
+
+            try {
+                await apiRequest(`/api/auth/sessions/${id}/revoke`, {
+                    method: 'POST'
+                });
+                await loadAuthSessions();
+            } catch (error) {
+                alert(error.message);
+            }
         }
 
         async function startTracking() {
@@ -616,18 +794,77 @@
             });
         }
 
+        function renderSessions() {
+            const list = document.getElementById('sessionList');
+            const logoutOthersBtn = document.getElementById('logoutOthersBtn');
+            list.innerHTML = '';
+
+            if (!authUser) {
+                list.innerHTML = '<li class="empty-state">Sign in to view sessions.</li>';
+                logoutOthersBtn.disabled = true;
+                return;
+            }
+
+            if (authSessions.length === 0) {
+                list.innerHTML = '<li class="empty-state">No active sessions found.</li>';
+                logoutOthersBtn.disabled = true;
+                return;
+            }
+
+            const revokableSessions = authSessions.filter((session) => !session.current && !session.revokedAt);
+            logoutOthersBtn.disabled = revokableSessions.length === 0;
+
+            authSessions.forEach((session) => {
+                const li = document.createElement('li');
+                li.className = 'session-item';
+
+                const title = session.current
+                    ? 'Current session'
+                    : (session.revokedAt ? 'Revoked session' : summarizeUserAgent(session.userAgent));
+                const lastSeenLabel = session.lastSeenAt
+                    ? `Last seen ${formatDateTime(session.lastSeenAt)}`
+                    : 'Last seen time unavailable';
+                const ipLabel = session.lastIp ? `Last IP ${escapeHtml(session.lastIp)}` : 'IP unavailable';
+                const expiresLabel = `Expires ${formatDateTime(session.expiresAt)}`;
+                const revokedLabel = session.revokedAt
+                    ? `Revoked ${formatDateTime(session.revokedAt)}`
+                    : 'Active';
+
+                const actionHtml = (!session.current && !session.revokedAt)
+                    ? `<button class="stop-btn inline-btn" onclick="revokeSession(${session.id})">Revoke</button>`
+                    : '';
+
+                li.innerHTML = `
+                    <div class="session-meta">
+                        <strong>${escapeHtml(title)}</strong>
+                        <span>Started ${escapeHtml(formatDateTime(session.createdAt))}</span>
+                        <span>${escapeHtml(lastSeenLabel)}</span>
+                        <span>${ipLabel}</span>
+                        <span>${escapeHtml(expiresLabel)}</span>
+                        <span>${escapeHtml(revokedLabel)}</span>
+                    </div>
+                    ${actionHtml}
+                `;
+                list.appendChild(li);
+            });
+        }
+
         async function initializePage() {
             try {
                 await loadAuthSession();
+                await loadAuthSessions();
                 await loadTrackedCourses();
             } catch (error) {
                 console.error(error);
                 authUser = null;
+                authSessions = [];
                 trackedCourses = [];
+                renderSessions();
                 renderList();
                 updateAuthUi();
             }
 
+            renderSessions();
             renderList();
         }
 
@@ -661,6 +898,7 @@
         document.addEventListener('visibilitychange', async () => {
             if (!document.hidden && authUser) {
                 try {
+                    await loadAuthSessions();
                     await loadTrackedCourses();
                 } catch (_) {
                     // Ignore focus refresh errors.

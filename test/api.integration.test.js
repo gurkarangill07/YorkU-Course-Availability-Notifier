@@ -1,5 +1,6 @@
 const test = require("node:test");
 const assert = require("node:assert/strict");
+const crypto = require("node:crypto");
 const http = require("node:http");
 const { Pool } = require("pg");
 const { createDb } = require("../src/db");
@@ -18,6 +19,10 @@ function buildCookieHeaderFromResponse(response) {
     .map((cookie) => String(cookie || "").split(";")[0].trim())
     .filter(Boolean);
   return parts.join("; ");
+}
+
+function hashSha256(text) {
+  return crypto.createHash("sha256").update(String(text || "")).digest("hex");
 }
 
 async function requestJson(baseUrl, path, { method = "GET", body, cookie } = {}) {
@@ -123,6 +128,65 @@ test(
       assert.equal(me.status, 200);
       assert.equal(me.json.authenticated, true);
       assert.equal(me.json.user.email, email.toLowerCase());
+
+      const extraSessionOneToken = crypto.randomBytes(16).toString("hex");
+      const extraSessionTwoToken = crypto.randomBytes(16).toString("hex");
+      await db.createAuthSession({
+        userId: verifyOtp.json.user.id,
+        tokenHash: hashSha256(extraSessionOneToken),
+        expiresAt: new Date(Date.now() + 7 * 24 * 60 * 60 * 1000),
+        lastIp: "127.0.0.2",
+        userAgent: "Integration Test Browser"
+      });
+      await db.createAuthSession({
+        userId: verifyOtp.json.user.id,
+        tokenHash: hashSha256(extraSessionTwoToken),
+        expiresAt: new Date(Date.now() + 7 * 24 * 60 * 60 * 1000),
+        lastIp: "127.0.0.3",
+        userAgent: "Integration Test Browser"
+      });
+
+      const sessionList = await requestJson(baseUrl, "/api/auth/sessions", {
+        cookie: sessionCookie
+      });
+      assert.equal(sessionList.status, 200);
+      assert.equal(Array.isArray(sessionList.json.items), true);
+      assert.equal(sessionList.json.items.length, 3);
+      const currentSession = sessionList.json.items.find((item) => item.current);
+      assert.ok(currentSession);
+      assert.match(String(currentSession.lastIp || ""), /127\.0\.0\.1/);
+      const revokableSession = sessionList.json.items.find((item) => !item.current);
+      assert.ok(revokableSession);
+
+      const revokeSession = await requestJson(
+        baseUrl,
+        `/api/auth/sessions/${revokableSession.id}/revoke`,
+        {
+          method: "POST",
+          cookie: sessionCookie
+        }
+      );
+      assert.equal(revokeSession.status, 200);
+      assert.equal(revokeSession.json.ok, true);
+
+      const logoutOthers = await requestJson(baseUrl, "/api/auth/logout-others", {
+        method: "POST",
+        cookie: sessionCookie
+      });
+      assert.equal(logoutOthers.status, 200);
+      assert.equal(logoutOthers.json.ok, true);
+      assert.equal(logoutOthers.json.revokedCount, 1);
+
+      const sessionListAfterRevocation = await requestJson(baseUrl, "/api/auth/sessions", {
+        cookie: sessionCookie
+      });
+      assert.equal(sessionListAfterRevocation.status, 200);
+      const remainingCurrent = sessionListAfterRevocation.json.items.find((item) => item.current);
+      assert.ok(remainingCurrent);
+      assert.equal(
+        sessionListAfterRevocation.json.items.filter((item) => !item.current && item.revokedAt).length,
+        2
+      );
 
       const createTrack = await requestJson(baseUrl, "/api/tracked-courses", {
         method: "POST",

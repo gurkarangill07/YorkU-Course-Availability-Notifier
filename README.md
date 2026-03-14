@@ -9,11 +9,16 @@ CourseNotif monitors tracked courses and notifies users when seats open (`os > 0
   - passwordless sign-in via email OTP
   - email input starts blank on unauthenticated page load (no localStorage prefill)
   - authenticated session view shows the signed-in email in the input
+  - session list + revoke controls for other browser sessions
   - adding/listing/removing tracked courses
   - pause/resume tracking controls
   - per-course tracking status labels
   - stricter 6-character cart-id validation with inline input guidance
   - optional per-user custom course display name
+- Auth hardening includes:
+  - OTP resend cooldowns and max failed-attempt caps
+  - route-level rate limits for OTP and authenticated write endpoints
+  - session revocation endpoints (`/api/auth/sessions`, `/api/auth/logout-others`)
 - Monitoring worker (`src/worker.js`) with modes:
   - `--init-login`
   - `--init-login --keep-open`
@@ -141,6 +146,14 @@ export AUTH_OTP_RESEND_COOLDOWN_SECONDS="60"
 export AUTH_OTP_MAX_FAILED_ATTEMPTS="5"
 export AUTH_SESSION_DAYS="30"
 export AUTH_COOKIE_SECURE="false"
+export AUTH_RATE_LIMIT_WINDOW_SECONDS="600"
+export AUTH_SEND_OTP_MAX_PER_IP="5"
+export AUTH_SEND_OTP_MAX_PER_EMAIL="3"
+export AUTH_VERIFY_OTP_MAX_PER_IP="10"
+export AUTH_VERIFY_OTP_MAX_PER_EMAIL="5"
+export AUTH_VERIFY_OTP_LOCKOUT_SECONDS="900"
+export AUTHENTICATED_WRITE_RATE_LIMIT_WINDOW_SECONDS="60"
+export AUTHENTICATED_WRITE_RATE_LIMIT_MAX="30"
 export OTP_PEPPER="change_this_random_secret"
 ```
 
@@ -351,8 +364,11 @@ bash scripts/uninstall-monitor-launchd.sh
 - `GET /api/metrics` (optional bearer auth via `METRICS_BEARER_TOKEN`)
 - `GET /api/worker-health` (optional bearer auth via `METRICS_BEARER_TOKEN`)
 - `GET /api/auth/me`
+- `GET /api/auth/sessions` (auth required)
 - `POST /api/auth/send-otp`
 - `POST /api/auth/verify-otp`
+- `POST /api/auth/logout-others` (auth required)
+- `POST /api/auth/sessions/:id/revoke` (auth required)
 - `POST /api/auth/logout`
 - `GET /api/tracked-courses` (auth required)
 - `POST /api/tracked-courses` (auth required)
@@ -363,7 +379,7 @@ bash scripts/uninstall-monitor-launchd.sh
 ## Current limitations
 
 - No dedicated UI/reporting page for notification delivery attempts yet.
-- OTP auth is implemented, but no external identity provider and no distributed/session revocation dashboard.
+- OTP auth is implemented, but no external identity provider and no distributed/shared rate-limit backend yet.
 - Test coverage is still limited and does not yet cover full browser automation paths.
 
 ## Runbooks
