@@ -52,11 +52,14 @@ Exit criteria:
 
 Goal: prevent unauthorized read/write of tracking data.
 
+Delivered so far:
+
+- Secret manager/env policy, rotation process, deployment checklist, and least-privilege access guidance are documented (`docs/SECRETS.md`, `docs/DEPLOYMENT.md`).
+
 - Keep passwordless auth/session flow and harden it for production.
 - Enforce stronger abuse controls (IP/device limits, lockouts, throttling).
 - Add session management and revocation UX.
 - Add route-level rate limiting and stricter input validation.
-- Add deployment checklist for secret management.
 
 Exit criteria:
 - Only authenticated users can manage their own tracked courses.

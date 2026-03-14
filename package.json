@@ -18,7 +18,7 @@
     "monitor:loop:local": "bash scripts/with-env.sh node src/worker.js",
     "monitor:health": "node scripts/check-worker-health.js",
     "monitor:health:local": "bash scripts/with-env.sh node scripts/check-worker-health.js",
-    "smoke": "node --check src/*.js",
+    "smoke": "node scripts/smoke-check.js",
     "test": "node --test test/*.test.js",
     "ci": "npm run smoke && npm run test"
   },

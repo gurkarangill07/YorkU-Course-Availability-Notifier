@@ -1,6 +1,8 @@
 const test = require("node:test");
 const assert = require("node:assert/strict");
 const http = require("node:http");
+const os = require("node:os");
+const path = require("node:path");
 const fs = require("node:fs/promises");
 const { MetricsRegistry, metrics } = require("../src/metrics");
 const {
@@ -172,9 +174,12 @@ test("API /api/metrics enforces bearer auth and serves metrics", async (t) => {
 
 test("API /api/worker-health returns healthy and stale states", async (t) => {
   metrics.reset();
-  const healthPath = `/tmp/coursenotif_worker_health_test_${Date.now()}_${Math.floor(
-    Math.random() * 100000
-  )}.json`;
+  const healthPath = path.join(
+    os.tmpdir(),
+    `coursenotif_worker_health_test_${Date.now()}_${Math.floor(
+      Math.random() * 100000
+    )}.json`
+  );
 
   const app = createApiApp({
     db: {},

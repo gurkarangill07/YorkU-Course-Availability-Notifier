@@ -156,6 +156,12 @@ Last updated: March 11, 2026
 - Runbook exists at `docs/RUNBOOK.md`
 - Compliance policy documentation exists at `docs/POLICY.md`
 
+10. Secrets and deployment hygiene
+- Secret manager and environment handling policy is documented in `docs/SECRETS.md`
+- Rotation process and incident response steps are documented in `docs/SECRETS.md`
+- Deployment checklist and preflight steps are documented in `docs/DEPLOYMENT.md`
+- Least-privilege env access guidance is documented for API and worker separation
+
 ## 3) Environment/config notes
 
 - `DATABASE_URL` is required
