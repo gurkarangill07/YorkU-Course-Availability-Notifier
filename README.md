@@ -250,7 +250,7 @@ Initialize shared browser session (browser mode):
 npm run monitor:init-login
 ```
 
-Note: `monitor:init-login` exits after session setup and closes the Playwright browser context.
+Note: `monitor:init-login` exits after session setup and closes the Playwright browser context. For manual login verification, prefer `npm run monitor:init-login:keep-open`.
 
 Keep browser open after login (manual verification/debug):
 
