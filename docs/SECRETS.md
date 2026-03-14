@@ -1,4 +1,4 @@
-﻿# CourseNotif Secrets and Environment Hygiene
+# CourseNotif Secrets and Environment Hygiene
 
 Last updated: March 11, 2026
 

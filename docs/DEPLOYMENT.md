@@ -1,4 +1,4 @@
-﻿# CourseNotif Deployment Checklist
+# CourseNotif Deployment Checklist
 
 Last updated: March 11, 2026
 

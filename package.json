@@ -20,7 +20,7 @@
     "monitor:health:local": "bash scripts/with-env.sh node scripts/check-worker-health.js",
     "smoke": "node scripts/smoke-check.js",
     "test": "node --test test/*.test.js",
-    "ci": "npm run smoke && node --test --test-isolation=none test/*.test.js"
+    "ci": "npm run smoke && npm run test"
   },
   "dependencies": {
     "express": "^4.21.2",
