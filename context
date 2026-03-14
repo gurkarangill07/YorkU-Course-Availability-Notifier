@@ -1,6 +1,6 @@
 # CourseNotif Context (Current Snapshot)
 
-Last updated: March 11, 2026
+Last updated: March 14, 2026
 
 ## 1) Project identity
 
@@ -71,7 +71,7 @@ Last updated: March 11, 2026
 4. Monitoring worker
 - Worker CLI in `src/worker.js`
 - Modes:
-  - `--init-login`
+  - `--init-login` (exits after session setup and closes the browser/context)
   - `--init-login --keep-open` (keeps VSB window open until Ctrl+C)
   - `--once`
   - default loop mode
@@ -201,7 +201,8 @@ Last updated: March 11, 2026
 
 5. Initialize browser session (browser mode)
 - `npm run monitor:init-login` (or `npm run monitor:init-login:local`)
-- For manual verification/debug where browser must remain open:
+- For manual verification/debug, prefer `npm run monitor:init-login:keep-open`
+- Local keep-open variant:
   - `npm run monitor:init-login:keep-open:local`
 
 6. Run monitor
