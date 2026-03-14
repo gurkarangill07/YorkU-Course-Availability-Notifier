@@ -2,7 +2,10 @@ const test = require("node:test");
 const assert = require("node:assert/strict");
 const { loadConfig } = require("../src/config");
 const {
+  getInitLoginBehaviorNote,
+  parseCliArgs,
   isMonitoringMode,
+  resolveRunMode,
   resolveEmergencyDisableState
 } = require("../src/worker");
 
@@ -99,4 +102,31 @@ test("resolveEmergencyDisableState only disables monitoring modes", () => {
     mode: "init_login"
   });
   assert.equal(initModeState.active, false);
+});
+
+test("parseCliArgs + resolveRunMode detect keep-open init-login mode", () => {
+  const args = parseCliArgs(["--init-login", "--keep-open"]);
+
+  assert.equal(args.initLogin, true);
+  assert.equal(args.keepOpen, true);
+  assert.equal(resolveRunMode(args), "init_login_keep_open");
+});
+
+test("getInitLoginBehaviorNote warns when init-login will close the browser", () => {
+  const args = parseCliArgs(["--init-login"]);
+  const note = getInitLoginBehaviorNote(args);
+
+  assert.ok(note);
+  assert.equal(note.event, "worker.init_login.browser_closes_on_exit");
+  assert.match(note.message, /closes the browser/i);
+  assert.match(note.message, /keep-open/i);
+});
+
+test("getInitLoginBehaviorNote explains keep-open behavior", () => {
+  const args = parseCliArgs(["--init-login", "--keep-open"]);
+  const note = getInitLoginBehaviorNote(args);
+
+  assert.ok(note);
+  assert.equal(note.event, "worker.init_login.keep_open_enabled");
+  assert.match(note.message, /keep the browser open/i);
 });

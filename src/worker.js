@@ -74,6 +74,26 @@ function resolveEmergencyDisableState({ config, mode }) {
   };
 }
 
+function getInitLoginBehaviorNote(args) {
+  if (!args || !args.initLogin) {
+    return null;
+  }
+
+  if (args.keepOpen) {
+    return {
+      event: "worker.init_login.keep_open_enabled",
+      message:
+        "Init-login will keep the browser open until the process receives SIGINT or SIGTERM."
+    };
+  }
+
+  return {
+    event: "worker.init_login.browser_closes_on_exit",
+    message:
+      "Init-login exits after session setup and closes the browser. Use --keep-open or `npm run monitor:init-login:keep-open` for manual verification."
+  };
+}
+
 function waitForTerminationSignal() {
   return new Promise((resolve) => {
     let settled = false;
@@ -149,6 +169,14 @@ async function run() {
   const config = loadConfig();
   let db = null;
   let vsbSource = null;
+  const initLoginBehaviorNote = getInitLoginBehaviorNote(args);
+
+  if (initLoginBehaviorNote) {
+    workerLogger.info(initLoginBehaviorNote.message, {
+      event: initLoginBehaviorNote.event,
+      mode
+    });
+  }
 
   if (config.monitorIntervalWasClamped) {
     metrics.increment(
@@ -380,6 +408,7 @@ if (require.main === module) {
 }
 
 module.exports = {
+  getInitLoginBehaviorNote,
   parseCliArgs,
   resolveRunMode,
   isMonitoringMode,
