@@ -1,7 +1,7 @@
 const express = require("express");
 const crypto = require("crypto");
 const path = require("path");
-const { loadConfig } = require("./config");
+const { loadConfig, validateRuntimeConfig, formatConfigValidationErrors } = require("./config");
 const { createDb } = require("./db");
 const defaultNotifier = require("./notification");
 const { createLogger } = require("./logger");
@@ -669,6 +669,18 @@ async function startApiServer({
   notifierModule = defaultNotifier,
   logger = apiLogger
 } = {}) {
+  const validation = validateRuntimeConfig({ env, runtime: "api" });
+  if (validation.warnings.length) {
+    logger.warn("config validation warnings", {
+      event: "api.config.validation_warning",
+      warnings: validation.warnings
+    });
+  }
+  if (validation.errors.length) {
+    const error = new Error(formatConfigValidationErrors(validation.errors));
+    error.code = "CONFIG_VALIDATION_FAILED";
+    throw error;
+  }
   const config = loadConfig(env);
   const db = createDb({ databaseUrl: config.databaseUrl });
   await db.ensureCompatibility();
