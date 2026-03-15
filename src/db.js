@@ -632,6 +632,7 @@ function createDb({ databaseUrl }) {
         id = $1
         AND user_id = $2
         AND revoked_at IS NULL
+        AND expires_at > NOW()
       `,
       [sessionId, userId]
     );
@@ -646,6 +647,7 @@ function createDb({ databaseUrl }) {
       WHERE
         user_id = $1
         AND revoked_at IS NULL
+        AND expires_at > NOW()
         AND id <> $2
       `,
       [userId, currentSessionId]

@@ -811,7 +811,9 @@
                 return;
             }
 
-            const revokableSessions = authSessions.filter((session) => !session.current && !session.revokedAt);
+            const revokableSessions = authSessions.filter(
+                (session) => !session.current && !session.revokedAt && !session.expired
+            );
             logoutOthersBtn.disabled = revokableSessions.length === 0;
 
             authSessions.forEach((session) => {
@@ -820,17 +822,21 @@
 
                 const title = session.current
                     ? 'Current session'
-                    : (session.revokedAt ? 'Revoked session' : summarizeUserAgent(session.userAgent));
+                    : (session.revokedAt
+                        ? 'Revoked session'
+                        : (session.expired ? 'Expired session' : summarizeUserAgent(session.userAgent)));
                 const lastSeenLabel = session.lastSeenAt
                     ? `Last seen ${formatDateTime(session.lastSeenAt)}`
                     : 'Last seen time unavailable';
                 const ipLabel = session.lastIp ? `Last IP ${escapeHtml(session.lastIp)}` : 'IP unavailable';
                 const expiresLabel = `Expires ${formatDateTime(session.expiresAt)}`;
-                const revokedLabel = session.revokedAt
-                    ? `Revoked ${formatDateTime(session.revokedAt)}`
-                    : 'Active';
+                const statusLabel = session.current
+                    ? 'Current'
+                    : (session.revokedAt
+                        ? `Revoked ${formatDateTime(session.revokedAt)}`
+                        : (session.expired ? 'Expired' : 'Active'));
 
-                const actionHtml = (!session.current && !session.revokedAt)
+                const actionHtml = (!session.current && !session.revokedAt && !session.expired)
                     ? `<button class="stop-btn inline-btn" onclick="revokeSession(${session.id})">Revoke</button>`
                     : '';
 
@@ -841,7 +847,7 @@
                         <span>${escapeHtml(lastSeenLabel)}</span>
                         <span>${ipLabel}</span>
                         <span>${escapeHtml(expiresLabel)}</span>
-                        <span>${escapeHtml(revokedLabel)}</span>
+                        <span>${escapeHtml(statusLabel)}</span>
                     </div>
                     ${actionHtml}
                 `;

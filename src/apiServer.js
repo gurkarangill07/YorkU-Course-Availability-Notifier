@@ -231,9 +231,23 @@ function mapTrackedCourseRow(row) {
 }
 
 function mapAuthSessionRow(row, currentSessionId) {
+  const expiresAtMs = new Date(row.expires_at).getTime();
+  const current = Number(row.id) === Number(currentSessionId);
+  const expired = Number.isFinite(expiresAtMs) && expiresAtMs <= Date.now();
+  let status = "active";
+  if (current) {
+    status = "current";
+  } else if (row.revoked_at) {
+    status = "revoked";
+  } else if (expired) {
+    status = "expired";
+  }
+
   return {
     id: Number(row.id),
-    current: Number(row.id) === Number(currentSessionId),
+    current,
+    expired,
+    status,
     createdAt: row.created_at,
     lastSeenAt: row.last_seen_at || row.created_at,
     expiresAt: row.expires_at,

@@ -218,12 +218,22 @@ test("API exposes session listing and revocation controls", async (t) => {
     {
       id: 3,
       user_id: 7,
-      expires_at: new Date(Date.now() + 7 * 24 * 60 * 60 * 1000).toISOString(),
+      expires_at: new Date(Date.now() - 5 * 60 * 1000).toISOString(),
       revoked_at: null,
       created_at: new Date(Date.now() - 3 * 60 * 60 * 1000).toISOString(),
       last_seen_at: new Date(Date.now() - 45 * 60 * 1000).toISOString(),
       last_ip: "127.0.0.3",
       user_agent: "Linux Browser"
+    },
+    {
+      id: 4,
+      user_id: 7,
+      expires_at: new Date(Date.now() + 7 * 24 * 60 * 60 * 1000).toISOString(),
+      revoked_at: null,
+      created_at: new Date(Date.now() - 4 * 60 * 60 * 1000).toISOString(),
+      last_seen_at: new Date(Date.now() - 90 * 60 * 1000).toISOString(),
+      last_ip: "127.0.0.4",
+      user_agent: "Chrome"
     }
   ];
   const db = {
@@ -241,7 +251,13 @@ test("API exposes session listing and revocation controls", async (t) => {
       const session = sessions.find(
         (candidate) => candidate.id === sessionId && candidate.user_id === userId
       );
-      if (!session || session.revoked_at) {
+      const expiresAtMs = session ? new Date(session.expires_at).getTime() : NaN;
+      if (
+        !session ||
+        session.revoked_at ||
+        !Number.isFinite(expiresAtMs) ||
+        expiresAtMs <= Date.now()
+      ) {
         return 0;
       }
       session.revoked_at = new Date().toISOString();
@@ -250,10 +266,13 @@ test("API exposes session listing and revocation controls", async (t) => {
     revokeOtherAuthSessionsForUser: async ({ userId, currentSessionId }) => {
       let revokedCount = 0;
       for (const session of sessions) {
+        const expiresAtMs = new Date(session.expires_at).getTime();
         if (
           session.user_id === userId &&
           session.id !== currentSessionId &&
-          !session.revoked_at
+          !session.revoked_at &&
+          Number.isFinite(expiresAtMs) &&
+          expiresAtMs > Date.now()
         ) {
           session.revoked_at = new Date().toISOString();
           revokedCount += 1;
@@ -284,8 +303,9 @@ test("API exposes session listing and revocation controls", async (t) => {
       cookie
     });
     assert.equal(listBefore.status, 200);
-    assert.equal(listBefore.json.items.length, 3);
+    assert.equal(listBefore.json.items.length, 4);
     assert.equal(listBefore.json.items.find((item) => item.id === 1).current, true);
+    assert.equal(listBefore.json.items.find((item) => item.id === 3).expired, true);
 
     const revokeOne = await requestJson(baseUrl, "/api/auth/sessions/2/revoke", {
       method: "POST",
@@ -315,6 +335,8 @@ test("API exposes session listing and revocation controls", async (t) => {
       listAfter.json.items.filter((item) => !item.current && item.revokedAt).length,
       2
     );
+    assert.equal(listAfter.json.items.find((item) => item.id === 3).expired, true);
+    assert.equal(listAfter.json.items.find((item) => item.id === 3).revokedAt, null);
   } finally {
     await new Promise((resolve) => server.close(resolve));
   }
