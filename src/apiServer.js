@@ -403,8 +403,9 @@ function createApiApp({
     return async (req, res, next) => {
       try {
         for (const limiterConfig of limiters) {
-          const key = limiterConfig.key(req);
-          const result = await limiterConfig.limiter.consume(key);
+          const rawKey = limiterConfig.key(req);
+          const storageKey = rawKey ? `${limiterConfig.name}:${rawKey}` : null;
+          const result = await limiterConfig.limiter.consume(storageKey);
           if (result.allowed) {
             continue;
           }
@@ -420,7 +421,7 @@ function createApiApp({
             method: req.method,
             path: req.path,
             requestIp: getRequestIp(req),
-            keyHash: key ? hashSha256(key) : null,
+            keyHash: storageKey ? hashSha256(storageKey) : null,
             retryAfterSeconds: result.retryAfterSeconds
           });
           res.set("Retry-After", String(result.retryAfterSeconds));

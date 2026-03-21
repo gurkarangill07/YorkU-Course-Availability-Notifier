@@ -588,6 +588,26 @@ function createDb({ databaseUrl }) {
     const client = await pool.connect();
     try {
       await client.query("BEGIN");
+      const inserted = await client.query(
+        `
+        INSERT INTO api_rate_limits (
+          limiter_key,
+          window_started_at,
+          request_count,
+          blocked_until,
+          updated_at
+        )
+        VALUES ($1, NOW(), 1, NULL, NOW())
+        ON CONFLICT (limiter_key) DO NOTHING
+        RETURNING limiter_key
+        `,
+        [key]
+      );
+      if (inserted.rowCount > 0) {
+        await client.query("COMMIT");
+        return { allowed: true };
+      }
+
       const { rows } = await client.query(
         `
         SELECT
@@ -606,21 +626,7 @@ function createDb({ databaseUrl }) {
       const now = Date.now();
       const existing = rows[0] || null;
       if (!existing) {
-        await client.query(
-          `
-          INSERT INTO api_rate_limits (
-            limiter_key,
-            window_started_at,
-            request_count,
-            blocked_until,
-            updated_at
-          )
-          VALUES ($1, NOW(), 1, NULL, NOW())
-          `,
-          [key]
-        );
-        await client.query("COMMIT");
-        return { allowed: true };
+        throw new Error(`Rate limit row missing after insert conflict for key ${key}`);
       }
 
       const blockedUntilMs = existing.blocked_until

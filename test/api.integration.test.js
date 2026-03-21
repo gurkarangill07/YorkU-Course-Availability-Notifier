@@ -25,6 +25,15 @@ function hashSha256(text) {
   return crypto.createHash("sha256").update(String(text || "")).digest("hex");
 }
 
+const API_RATE_LIMIT_PREFIXES = [
+  "auth_send_otp_ip",
+  "auth_send_otp_email",
+  "auth_verify_otp_ip",
+  "auth_verify_otp_email",
+  "authenticated_write_user",
+  "authenticated_write_ip"
+];
+
 async function requestJson(baseUrl, path, { method = "GET", body, cookie } = {}) {
   const headers = {};
   if (body !== undefined) {
@@ -60,7 +69,22 @@ async function requestJson(baseUrl, path, { method = "GET", body, cookie } = {})
 }
 
 async function clearApiRateLimitKeys(pool, keys) {
-  const uniqueKeys = [...new Set(keys.filter(Boolean))];
+  const uniqueKeys = [
+    ...new Set(
+      keys
+        .filter(Boolean)
+        .flatMap((key) => {
+          const textKey = String(key);
+          const alreadyNamespaced = API_RATE_LIMIT_PREFIXES.some((prefix) =>
+            textKey.startsWith(`${prefix}:`)
+          );
+          if (alreadyNamespaced) {
+            return [textKey];
+          }
+          return [textKey, ...API_RATE_LIMIT_PREFIXES.map((prefix) => `${prefix}:${textKey}`)];
+        })
+    )
+  ];
   if (uniqueKeys.length === 0) {
     return;
   }
@@ -334,6 +358,61 @@ test(
       await db.close();
       await new Promise((resolve) => serverOne.close(resolve));
       await new Promise((resolve) => serverTwo.close(resolve));
+    }
+  }
+);
+
+test(
+  "DB-backed API rate limits handle concurrent first hits without errors",
+  { skip: !process.env.DATABASE_URL },
+  async () => {
+    const dbOne = createDb({ databaseUrl: process.env.DATABASE_URL });
+    const dbTwo = createDb({ databaseUrl: process.env.DATABASE_URL });
+    await dbOne.ensureCompatibility();
+    await dbTwo.ensureCompatibility();
+
+    const cleanupPool = new Pool({ connectionString: process.env.DATABASE_URL });
+    const limiterKey = `auth_verify_otp_email:email:concurrent-${randomSuffix()}@example.com`;
+    const attempts = 12;
+
+    try {
+      await clearApiRateLimitKeys(cleanupPool, [limiterKey]);
+
+      const results = await Promise.allSettled(
+        Array.from({ length: attempts }, (_, index) => {
+          const db = index % 2 === 0 ? dbOne : dbTwo;
+          return db.consumeApiRateLimit({
+            key: limiterKey,
+            windowMs: 60 * 1000,
+            maxRequests: attempts + 5
+          });
+        })
+      );
+
+      assert.equal(
+        results.every((result) => result.status === "fulfilled"),
+        true
+      );
+      assert.equal(
+        results.every((result) => result.status === "fulfilled" && result.value.allowed),
+        true
+      );
+
+      const stored = await cleanupPool.query(
+        `
+        SELECT request_count
+        FROM api_rate_limits
+        WHERE limiter_key = $1
+        `,
+        [limiterKey]
+      );
+      assert.equal(stored.rowCount, 1);
+      assert.equal(Number(stored.rows[0].request_count), attempts);
+    } finally {
+      await clearApiRateLimitKeys(cleanupPool, [limiterKey]);
+      await cleanupPool.end();
+      await dbOne.close();
+      await dbTwo.close();
     }
   }
 );

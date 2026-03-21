@@ -189,3 +189,97 @@ test("API auth verify-otp rate limits repeated failures", async (t) => {
     await new Promise((resolve) => server.close(resolve));
   }
 });
+
+test("API DB-backed rate limits isolate send-otp and verify-otp counters", async (t) => {
+  const email = "namespaced-rate-limit@example.com";
+  const expectedOtp = "123456";
+  let verificationEnabled = false;
+  let failedAttempts = 0;
+  const consumedKeys = [];
+  const countsByKey = new Map();
+  const db = {
+    consumeApiRateLimit: async ({ key, maxRequests }) => {
+      consumedKeys.push(key);
+      const nextCount = (countsByKey.get(key) || 0) + 1;
+      countsByKey.set(key, nextCount);
+      if (nextCount > maxRequests) {
+        return { allowed: false, retryAfterSeconds: 60 };
+      }
+      return { allowed: true };
+    },
+    cleanupExpiredAuthRecords: async () => {},
+    getLatestOtpChallengeByEmail: async (requestedEmail) => {
+      if (!verificationEnabled || requestedEmail !== email) {
+        return null;
+      }
+      return {
+        id: 73,
+        email,
+        otp_hash: hashSha256(`${email}|${expectedOtp}|test-pepper`),
+        expires_at: new Date(Date.now() + 10 * 60 * 1000).toISOString(),
+        failed_attempts: failedAttempts,
+        consumed_at: null,
+        created_at: new Date(Date.now() - 5 * 60 * 1000).toISOString()
+      };
+    },
+    invalidateActiveOtpChallengesByEmail: async () => {},
+    createOtpChallenge: async () => ({ id: 10 }),
+    markOtpChallengeConsumed: async () => {},
+    incrementOtpChallengeFailedAttempts: async () => {
+      failedAttempts += 1;
+      return failedAttempts;
+    }
+  };
+  const app = createApiApp({
+    db,
+    notifierModule: createNotifierStub(),
+    env: {
+      ...process.env,
+      OTP_PEPPER: "test-pepper",
+      AUTH_COOKIE_SECURE: "false",
+      AUTH_OTP_MAX_FAILED_ATTEMPTS: "10",
+      AUTH_RATE_LIMIT_WINDOW_SECONDS: "60",
+      AUTH_SEND_OTP_MAX_PER_IP: "10",
+      AUTH_SEND_OTP_MAX_PER_EMAIL: "2",
+      AUTH_VERIFY_OTP_MAX_PER_IP: "10",
+      AUTH_VERIFY_OTP_MAX_PER_EMAIL: "2",
+      AUTH_VERIFY_OTP_LOCKOUT_SECONDS: "120"
+    }
+  });
+  const server = http.createServer(app);
+  const address = await listenOrSkip(server, t);
+  if (!address) {
+    return;
+  }
+  const baseUrl = `http://127.0.0.1:${address.port}`;
+
+  try {
+    const firstSend = await requestJson(baseUrl, "/api/auth/send-otp", {
+      method: "POST",
+      body: { email }
+    });
+    const secondSend = await requestJson(baseUrl, "/api/auth/send-otp", {
+      method: "POST",
+      body: { email }
+    });
+    verificationEnabled = true;
+    const verify = await requestJson(baseUrl, "/api/auth/verify-otp", {
+      method: "POST",
+      body: { email, otp: "000000" }
+    });
+
+    assert.equal(firstSend.status, 200);
+    assert.equal(secondSend.status, 200);
+    assert.equal(verify.status, 400);
+    assert.deepEqual(consumedKeys, [
+      "auth_send_otp_ip:ip:127.0.0.1",
+      `auth_send_otp_email:email:${email}`,
+      "auth_send_otp_ip:ip:127.0.0.1",
+      `auth_send_otp_email:email:${email}`,
+      "auth_verify_otp_ip:ip:127.0.0.1",
+      `auth_verify_otp_email:email:${email}`
+    ]);
+  } finally {
+    await new Promise((resolve) => server.close(resolve));
+  }
+});
