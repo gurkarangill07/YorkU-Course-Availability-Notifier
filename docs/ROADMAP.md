@@ -98,17 +98,18 @@ Delivered so far:
 
 - Structured logs are implemented across API, worker, monitor, notification, and VSB source modules.
 - API exposes Prometheus-style metrics at `/api/metrics` (optional bearer auth).
+- API now also exposes worker-only metrics at `/api/worker-metrics` for centralized scraping.
 - Worker heartbeat snapshots and health evaluation are implemented:
   - `/api/worker-health`
   - `npm run monitor:health`
+- Watchdog automation exists via `scripts/check-worker-health.js` with alert/restart actions.
+- Supervisor and launchd runners now have health-aware watchdog wiring and crash-loop backoff/state.
 - Initial operations runbook is documented (`docs/RUNBOOK.md`).
 
 Remaining:
 
-- Extend metrics export strategy for worker-only counters into centralized scrape pipelines.
-- Wire concrete alert automation (for example, cron/monitor jobs) for crash loops/session-expired loops.
-- Add supervisor/launchd-specific health checks and restart policies tied to alert thresholds.
-- Expand runbook automation scripts for common remediation tasks.
+- Add external dashboard/pager integration on top of the current email/watchdog automation.
+- Expand runbook automation scripts for more one-command remediation flows.
 
 Exit criteria:
 - Operators can detect, diagnose, and recover common failures quickly.

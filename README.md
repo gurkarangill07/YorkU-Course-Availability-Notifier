@@ -41,13 +41,16 @@ CourseNotif monitors tracked courses and notifies users when seats open (`os > 0
   - structured logs for API/worker/monitor/notification/VSB flows
   - in-process metrics registry with Prometheus-style `/api/metrics`
   - worker heartbeat snapshots + health checks (`/api/worker-health`, `npm run monitor:health`)
+  - worker-only metrics exposure for centralized scraping via `/api/worker-metrics`
+  - watchdog alert/restart automation for unhealthy workers, session-expiry loops, and supervisor crash loops
+  - supervisor crash-loop backoff plus launchd watchdog installation helpers
   - operations runbook (`docs/RUNBOOK.md`)
 - Compliance/policy controls are implemented:
   - minimum monitor poll interval guardrail (`MIN_POLL_INTERVAL_SECONDS`)
   - emergency monitoring kill switch (`MONITOR_EMERGENCY_DISABLE`)
   - policy assumptions documented in `docs/POLICY.md`
 - Secret management policy, rotation process, and deployment checklist are documented (`docs/SECRETS.md`, `docs/DEPLOYMENT.md`).
-- Automated tests exist for parser, monitor dispatch logic, auth hardening, deterministic browser recovery paths, and API auth/course flows (`test/*.test.js`).
+- Automated tests exist for parser, monitor dispatch logic, auth hardening, ops-hardening/watchdog logic, deterministic browser recovery paths, and API auth/course flows (`test/*.test.js`).
 - CI workflow runs on PRs and `main` pushes and fails on smoke/test regressions (`.github/workflows/ci.yml`).
 
 ## Key files
@@ -63,12 +66,14 @@ CourseNotif monitors tracked courses and notifies users when seats open (`os > 0
 - `src/logger.js`: structured logging utility
 - `src/metrics.js`: metrics registry and Prometheus renderer
 - `src/workerHealth.js`: worker heartbeat file helpers and health evaluator
+- `src/opsHardening.js`: watchdog thresholds, cooldowns, and restart decisions
 - `db/schema.sql`: schema and compatibility migration guards
 - `docs/RUNBOOK.md`: incident runbooks and alert conditions
 - `docs/POLICY.md`: compliance guardrails and emergency disable policy
 - `test/*.test.js`: unit + integration tests
 - `.github/workflows/ci.yml`: CI gates (smoke + tests)
-- `scripts/*.sh`: env loader, supervisor scripts, and launchd helpers
+- `scripts/check-worker-health.js`: worker health CLI + alert/restart watchdog entrypoint
+- `scripts/*.sh`: env loader, supervisor scripts, watchdog loop, and launchd helpers
 
 ## Setup
 
@@ -161,9 +166,24 @@ Observability and operations settings (optional but recommended):
 ```bash
 export LOG_LEVEL="info"                        # debug | info | warn | error
 export LOG_FORMAT="text"                       # text | json
-export METRICS_BEARER_TOKEN=""                 # set to require Bearer auth on /api/metrics and /api/worker-health
+export METRICS_BEARER_TOKEN=""                 # set to require Bearer auth on /api/metrics, /api/worker-metrics, and /api/worker-health
 export WORKER_HEALTH_PATH="/tmp/coursenotif_worker_health.json"
+export WORKER_METRICS_PATH="/tmp/coursenotif_worker_metrics.prom"
 export WORKER_HEALTH_MAX_STALE_SECONDS="300"
+export WORKER_HEALTH_ALERT_CONSECUTIVE_FAILURES="2"
+export WORKER_SESSION_EXPIRED_ALERT_THRESHOLD="3"
+export WORKER_SESSION_EXPIRED_ALERT_WINDOW_SECONDS="900"
+export WORKER_ALERT_COOLDOWN_SECONDS="1800"
+export WORKER_HEALTH_RESTART_CONSECUTIVE_FAILURES="3"
+export WORKER_RESTART_COOLDOWN_SECONDS="900"
+export WORKER_WATCHDOG_STATE_PATH="/tmp/coursenotif_worker_watchdog_state.json"
+export MONITOR_SUPERVISOR_STATE_PATH="/tmp/coursenotif_monitor_supervisor_state.json"
+export MONITOR_SUPERVISOR_RESTART_SECONDS="5"
+export MONITOR_SUPERVISOR_CRASH_LOOP_WINDOW_SECONDS="600"
+export MONITOR_SUPERVISOR_CRASH_LOOP_MAX_RESTARTS="5"
+export MONITOR_SUPERVISOR_MAX_RESTART_SECONDS="300"
+export MONITOR_SUPERVISOR_WATCHDOG_INTERVAL_SECONDS="60"
+export WORKER_WATCHDOG_INTERVAL_SECONDS="60"   # launchd watchdog interval
 ```
 
 Compliance controls behavior:
@@ -345,6 +365,7 @@ Metrics and health endpoints:
 
 ```bash
 curl -sS http://localhost:3000/api/metrics
+curl -sS http://localhost:3000/api/worker-metrics
 curl -sS http://localhost:3000/api/worker-health
 ```
 
@@ -352,6 +373,7 @@ If `METRICS_BEARER_TOKEN` is configured, include:
 
 ```bash
 curl -sS -H "Authorization: Bearer $METRICS_BEARER_TOKEN" http://localhost:3000/api/metrics
+curl -sS -H "Authorization: Bearer $METRICS_BEARER_TOKEN" http://localhost:3000/api/worker-metrics
 curl -sS -H "Authorization: Bearer $METRICS_BEARER_TOKEN" http://localhost:3000/api/worker-health
 ```
 
@@ -382,10 +404,18 @@ bash scripts/start-monitor-supervisor.sh
 bash scripts/stop-monitor-supervisor.sh
 ```
 
+One-shot watchdog health/alert check:
+
+```bash
+node scripts/check-worker-health.js --alert-on-failure --restart supervisor
+```
+
 Logs:
 
 - `/tmp/coursenotif_monitor_supervisor.out.log`
 - `/tmp/coursenotif_monitor_supervisor.err.log`
+- `/tmp/coursenotif_monitor_watchdog.out.log`
+- `/tmp/coursenotif_monitor_watchdog.err.log`
 
 macOS launchd (auto restart / login session):
 
@@ -398,6 +428,7 @@ bash scripts/uninstall-monitor-launchd.sh
 
 - `GET /api/health`
 - `GET /api/metrics` (optional bearer auth via `METRICS_BEARER_TOKEN`)
+- `GET /api/worker-metrics` (optional bearer auth via `METRICS_BEARER_TOKEN`)
 - `GET /api/worker-health` (optional bearer auth via `METRICS_BEARER_TOKEN`)
 - `GET /api/auth/me`
 - `POST /api/auth/send-otp`
@@ -414,6 +445,7 @@ bash scripts/uninstall-monitor-launchd.sh
 - No dedicated UI/reporting page for notification delivery attempts yet.
 - OTP auth is implemented, but no external identity provider yet.
 - Deterministic browser-path coverage now exists for init-login and session-recovery flows, but CI still does not exercise the live VSB site or selector drift.
+- Ops alerting is email/watchdog driven today; there is not yet a hosted dashboard or pager integration.
 
 ## Runbooks
 

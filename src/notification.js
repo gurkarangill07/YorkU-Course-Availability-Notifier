@@ -219,6 +219,42 @@ async function sendSessionExpiredEmail({ toEmail, reason }) {
   });
 }
 
+async function sendOperationalAlertEmail({
+  toEmail,
+  alertKey,
+  severity = "warning",
+  summary,
+  details = {},
+  appUrl = process.env.APP_BASE_URL || "http://localhost:3000"
+}) {
+  const normalizedKey = String(alertKey || "operational_alert").trim();
+  const normalizedSeverity = String(severity || "warning").trim().toUpperCase();
+  const subject = `[CourseNotif] ${normalizedSeverity}: ${
+    String(summary || normalizedKey).trim() || "Operational alert"
+  }`;
+  const lines = [
+    "CourseNotif detected an operational condition that needs attention.",
+    "",
+    `Alert: ${normalizedKey}`,
+    `Severity: ${normalizedSeverity}`
+  ];
+  for (const [key, value] of Object.entries(details || {})) {
+    if (value === undefined || value === null || value === "") {
+      continue;
+    }
+    lines.push(`${key}: ${value}`);
+  }
+  if (appUrl) {
+    lines.push("", `Open CourseNotif: ${String(appUrl).trim()}`);
+  }
+
+  await sendMail({
+    toEmail,
+    subject,
+    text: lines.join("\n")
+  });
+}
+
 async function sendLoginOtpEmail({ toEmail, otpCode, expiresMinutes = 10 }) {
   const code = String(otpCode || "").trim();
   if (!/^\d{6}$/.test(code)) {
@@ -259,5 +295,6 @@ module.exports = {
   sendCourseOpenEmail,
   sendInvalidCourseEmail,
   sendSessionExpiredEmail,
+  sendOperationalAlertEmail,
   sendLoginOtpEmail
 };

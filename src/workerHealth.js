@@ -2,10 +2,25 @@ const fs = require("node:fs/promises");
 const path = require("node:path");
 
 const DEFAULT_WORKER_HEALTH_PATH = "/tmp/coursenotif_worker_health.json";
+const DEFAULT_WORKER_METRICS_PATH = "/tmp/coursenotif_worker_metrics.prom";
 
 function resolveWorkerHealthPath(env = process.env) {
   const configured = String(env.WORKER_HEALTH_PATH || "").trim();
   return configured || DEFAULT_WORKER_HEALTH_PATH;
+}
+
+function resolveWorkerMetricsPath(env = process.env) {
+  const configured = String(env.WORKER_METRICS_PATH || "").trim();
+  return configured || DEFAULT_WORKER_METRICS_PATH;
+}
+
+async function writeTextFileAtomic(filePath, contents) {
+  const targetPath = String(filePath || "").trim();
+  const directory = path.dirname(targetPath);
+  await fs.mkdir(directory, { recursive: true });
+  const tempPath = `${targetPath}.${process.pid}.tmp`;
+  await fs.writeFile(tempPath, String(contents || ""), "utf8");
+  await fs.rename(tempPath, targetPath);
 }
 
 async function writeWorkerHealthSnapshot(
@@ -27,12 +42,34 @@ async function writeWorkerHealthSnapshot(
   return payload;
 }
 
+async function writeWorkerMetricsSnapshot(
+  metricsBody,
+  { metricsPath = resolveWorkerMetricsPath(process.env) } = {}
+) {
+  const targetPath =
+    String(metricsPath || "").trim() || DEFAULT_WORKER_METRICS_PATH;
+  const normalizedBody = String(metricsBody || "");
+  await writeTextFileAtomic(
+    targetPath,
+    normalizedBody.endsWith("\n") ? normalizedBody : `${normalizedBody}\n`
+  );
+  return targetPath;
+}
+
 async function readWorkerHealthSnapshot(
   { healthPath = resolveWorkerHealthPath(process.env) } = {}
 ) {
   const targetPath = String(healthPath || "").trim() || DEFAULT_WORKER_HEALTH_PATH;
   const raw = await fs.readFile(targetPath, "utf8");
   return JSON.parse(raw);
+}
+
+async function readWorkerMetricsSnapshot(
+  { metricsPath = resolveWorkerMetricsPath(process.env) } = {}
+) {
+  const targetPath =
+    String(metricsPath || "").trim() || DEFAULT_WORKER_METRICS_PATH;
+  return fs.readFile(targetPath, "utf8");
 }
 
 function checkWorkerHealthStatus(
@@ -70,6 +107,14 @@ function checkWorkerHealthStatus(
     };
   }
 
+  if (snapshot.state === "disabled") {
+    return {
+      ok: true,
+      reason: "disabled",
+      staleSeconds
+    };
+  }
+
   if (requirePidAlive && !isProcessRunning(snapshot.pid)) {
     return {
       ok: false,
@@ -100,9 +145,13 @@ function isProcessRunning(pidValue) {
 
 module.exports = {
   DEFAULT_WORKER_HEALTH_PATH,
+  DEFAULT_WORKER_METRICS_PATH,
   resolveWorkerHealthPath,
+  resolveWorkerMetricsPath,
   writeWorkerHealthSnapshot,
+  writeWorkerMetricsSnapshot,
   readWorkerHealthSnapshot,
+  readWorkerMetricsSnapshot,
   checkWorkerHealthStatus,
   isProcessRunning
 };

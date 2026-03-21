@@ -1,6 +1,6 @@
 # CourseNotif Context (Current Snapshot)
 
-Last updated: March 21, 2026 (browser-path coverage update)
+Last updated: March 21, 2026 (ops hardening update)
 
 ## 1) Project identity
 
@@ -38,6 +38,7 @@ Last updated: March 21, 2026 (browser-path coverage update)
 - Implemented endpoints:
   - `GET /api/health`
   - `GET /api/metrics` (optional bearer auth)
+  - `GET /api/worker-metrics` (optional bearer auth)
   - `GET /api/worker-health` (optional bearer auth)
   - `GET /api/auth/me`
   - `POST /api/auth/send-otp`
@@ -135,9 +136,11 @@ Last updated: March 21, 2026 (browser-path coverage update)
   - `scripts/start-monitor-supervisor.sh`
   - `scripts/stop-monitor-supervisor.sh`
   - `scripts/monitor-supervisor.sh`
+  - `scripts/monitor-watchdog.sh`
 - Worker health check script:
   - `npm run monitor:health`
   - `scripts/check-worker-health.js`
+  - supports `--alert-on-failure` and `--restart <none|supervisor|launchd>`
 - macOS launchd management:
   - `scripts/install-monitor-launchd.sh`
   - `scripts/uninstall-monitor-launchd.sh`
@@ -147,6 +150,7 @@ Last updated: March 21, 2026 (browser-path coverage update)
   - parser unit tests (`test/jspParser.test.js`)
   - monitor dispatch/retry unit tests (`test/monitorService.test.js`)
   - auth hardening tests (`test/authHardening.test.js`)
+  - ops hardening/watchdog tests (`test/opsHardening.test.js`)
   - deterministic browser-source tests for init-login recovery + auto-relogin (`test/vsbBrowserSource.test.js`)
   - API auth + tracked-course integration test (`test/api.integration.test.js`)
   - observability tests (`test/observability.test.js`, `test/logger.test.js`)
@@ -159,8 +163,12 @@ Last updated: March 21, 2026 (browser-path coverage update)
 - Structured logging utility exists in `src/logger.js`
 - Metrics registry exists in `src/metrics.js`
 - API metrics endpoint exists: `GET /api/metrics` (optional bearer token)
+- Worker metrics scrape endpoint exists: `GET /api/worker-metrics` (optional bearer token)
 - Worker heartbeat + health evaluator exists in `src/workerHealth.js`
 - Worker health API endpoint exists: `GET /api/worker-health` (optional bearer token)
+- Ops watchdog logic exists in `src/opsHardening.js`
+- Automated alert/restart entrypoint exists in `scripts/check-worker-health.js`
+- Supervisor mode now records crash-loop state/backoff for alerting and safer restart behavior
 - Runbook exists at `docs/RUNBOOK.md`
 - Compliance policy documentation exists at `docs/POLICY.md`
 
@@ -191,7 +199,22 @@ Last updated: March 21, 2026 (browser-path coverage update)
   - `LOG_FORMAT`
   - `METRICS_BEARER_TOKEN`
   - `WORKER_HEALTH_PATH`
+  - `WORKER_METRICS_PATH`
   - `WORKER_HEALTH_MAX_STALE_SECONDS`
+  - `WORKER_HEALTH_ALERT_CONSECUTIVE_FAILURES`
+  - `WORKER_SESSION_EXPIRED_ALERT_THRESHOLD`
+  - `WORKER_SESSION_EXPIRED_ALERT_WINDOW_SECONDS`
+  - `WORKER_ALERT_COOLDOWN_SECONDS`
+  - `WORKER_HEALTH_RESTART_CONSECUTIVE_FAILURES`
+  - `WORKER_RESTART_COOLDOWN_SECONDS`
+  - `WORKER_WATCHDOG_STATE_PATH`
+  - `MONITOR_SUPERVISOR_STATE_PATH`
+  - `MONITOR_SUPERVISOR_RESTART_SECONDS`
+  - `MONITOR_SUPERVISOR_CRASH_LOOP_WINDOW_SECONDS`
+  - `MONITOR_SUPERVISOR_CRASH_LOOP_MAX_RESTARTS`
+  - `MONITOR_SUPERVISOR_MAX_RESTART_SECONDS`
+  - `MONITOR_SUPERVISOR_WATCHDOG_INTERVAL_SECONDS`
+  - `WORKER_WATCHDOG_INTERVAL_SECONDS`
 - Compliance/policy envs are supported:
   - `MIN_POLL_INTERVAL_SECONDS`
   - `MONITOR_EMERGENCY_DISABLE`
@@ -237,6 +260,7 @@ Last updated: March 21, 2026 (browser-path coverage update)
 8. Optional background operation
 - Manual supervisor: `bash scripts/start-monitor-supervisor.sh`
 - Stop supervisor: `bash scripts/stop-monitor-supervisor.sh`
+- Watchdog check: `node scripts/check-worker-health.js --alert-on-failure --restart supervisor`
 - macOS launchd install/uninstall scripts are available for persistent worker runtime
 - Compliance policy runbook:
   - `docs/POLICY.md` for guardrails and emergency disable procedure
@@ -246,7 +270,7 @@ Last updated: March 21, 2026 (browser-path coverage update)
 1. Add live-site browser smoke coverage and selector-drift safeguards beyond the current deterministic browser harness
 2. Improve notification-attempt visibility (UI or admin API)
 3. Add an external identity provider or stronger auth-management surface if OTP-only auth becomes a support burden
-4. Add centralized alert routing/dashboard automation on top of current observability baseline
+4. Add external dashboard/pager integration on top of the current file/email watchdog automation
 
 ## 6) Notes for future contributors/agents
 

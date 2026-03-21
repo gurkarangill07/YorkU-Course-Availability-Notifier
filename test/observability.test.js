@@ -77,7 +77,7 @@ test("MetricsRegistry renders Prometheus counters, gauges, and histograms", () =
   assert.match(body, /testsvc_latency_ms_count 2/);
 });
 
-test("checkWorkerHealthStatus detects healthy, stale, and fatal snapshots", () => {
+test("checkWorkerHealthStatus detects healthy, stale, fatal, and disabled snapshots", () => {
   const healthy = checkWorkerHealthStatus(
     {
       pid: process.pid,
@@ -119,6 +119,20 @@ test("checkWorkerHealthStatus detects healthy, stale, and fatal snapshots", () =
   );
   assert.equal(fatal.ok, false);
   assert.equal(fatal.reason, "fatal_state");
+
+  const disabled = checkWorkerHealthStatus(
+    {
+      pid: 999999,
+      state: "disabled",
+      updatedAt: new Date().toISOString()
+    },
+    {
+      maxStaleSeconds: 300,
+      requirePidAlive: true
+    }
+  );
+  assert.equal(disabled.ok, true);
+  assert.equal(disabled.reason, "disabled");
 });
 
 test("API /api/metrics enforces bearer auth and serves metrics", async (t) => {
@@ -248,9 +262,103 @@ test("API /api/worker-health returns healthy and stale states", async (t) => {
     assert.equal(stale.status, 503);
     assert.equal(stale.json.ok, false);
     assert.equal(stale.json.reason, "stale_heartbeat");
+
+    await fs.writeFile(
+      healthPath,
+      JSON.stringify(
+        {
+          pid: 999999,
+          state: "disabled",
+          updatedAt: new Date().toISOString()
+        },
+        null,
+        2
+      )
+    );
+
+    const disabled = await request(baseUrl, "/api/worker-health", {
+      headers: {
+        authorization: "Bearer secret-token"
+      }
+    });
+    assert.equal(disabled.status, 200);
+    assert.equal(disabled.json.ok, true);
+    assert.equal(disabled.json.reason, "disabled");
   } finally {
     metrics.reset();
     await fs.rm(healthPath, { force: true });
+    await new Promise((resolve) => server.close(resolve));
+  }
+});
+
+test("API /api/worker-metrics enforces bearer auth and serves worker metrics", async (t) => {
+  metrics.reset();
+  const metricsPath = path.join(
+    os.tmpdir(),
+    `coursenotif_worker_metrics_test_${Date.now()}_${Math.floor(
+      Math.random() * 100000
+    )}.prom`
+  );
+
+  const app = createApiApp({
+    db: {},
+    notifierModule: {
+      sendLoginOtpEmail: async () => {},
+      sendCourseOpenEmail: async () => ({ messageId: "mid" }),
+      sendSessionExpiredEmail: async () => {}
+    },
+    env: {
+      ...process.env,
+      OTP_PEPPER: process.env.OTP_PEPPER || "test-pepper",
+      AUTH_COOKIE_SECURE: "false",
+      METRICS_BEARER_TOKEN: "secret-token",
+      WORKER_METRICS_PATH: metricsPath
+    }
+  });
+  const server = http.createServer(app);
+  const address = await listenOrSkip(server, t);
+  if (!address) {
+    return;
+  }
+  const baseUrl = `http://127.0.0.1:${address.port}`;
+
+  try {
+    await fs.writeFile(
+      metricsPath,
+      "# HELP coursenotif_worker_monitor_runs_total Total worker runs.\n# TYPE coursenotif_worker_monitor_runs_total counter\ncoursenotif_worker_monitor_runs_total 7\n"
+    );
+
+    const unauthorized = await request(baseUrl, "/api/worker-metrics");
+    assert.equal(unauthorized.status, 401);
+
+    const authorized = await request(baseUrl, "/api/worker-metrics", {
+      headers: {
+        authorization: "Bearer secret-token"
+      }
+    });
+    assert.equal(authorized.status, 200);
+    assert.match(
+      String(authorized.headers.get("content-type") || ""),
+      /text\/plain/
+    );
+    assert.match(
+      authorized.text,
+      /coursenotif_worker_monitor_runs_total 7/
+    );
+
+    await fs.rm(metricsPath, { force: true });
+
+    const missing = await request(baseUrl, "/api/worker-metrics", {
+      headers: {
+        authorization: "Bearer secret-token"
+      }
+    });
+    assert.equal(missing.status, 503);
+    assert.equal(missing.json.ok, false);
+    assert.equal(missing.json.reason, "worker_metrics_unreadable");
+  } finally {
+    metrics.reset();
+    await fs.rm(metricsPath, { force: true });
     await new Promise((resolve) => server.close(resolve));
   }
 });

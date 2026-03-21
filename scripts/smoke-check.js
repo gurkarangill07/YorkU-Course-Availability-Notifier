@@ -2,7 +2,10 @@ const fs = require("node:fs");
 const path = require("node:path");
 const vm = require("node:vm");
 
-const srcDir = path.join(__dirname, "..", "src");
+const projectDirs = [
+  path.join(__dirname, "..", "src"),
+  path.join(__dirname, "..", "scripts")
+];
 const jsFiles = [];
 
 function collectJsFiles(dirPath) {
@@ -19,10 +22,12 @@ function collectJsFiles(dirPath) {
   }
 }
 
-collectJsFiles(srcDir);
+for (const dirPath of projectDirs) {
+  collectJsFiles(dirPath);
+}
 
 if (jsFiles.length === 0) {
-  console.log("No src/**/*.js files found for smoke check.");
+  console.log("No project JS files found for smoke check.");
   process.exit(0);
 }
 

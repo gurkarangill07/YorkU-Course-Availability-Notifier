@@ -1,6 +1,6 @@
 # CourseNotif Secrets and Environment Hygiene
 
-Last updated: March 11, 2026
+Last updated: March 21, 2026
 
 ## Scope
 
@@ -16,7 +16,7 @@ This document defines how secrets are stored, accessed, and rotated for CourseNo
 | OTP_PEPPER | OTP hash pepper | 180 days |
 | VSB_LOGIN_USERNAME | VSB auto-login username | 90 days |
 | VSB_LOGIN_PASSWORD | VSB auto-login password | 90 days |
-| METRICS_BEARER_TOKEN | Protect /api/metrics and /api/worker-health | 180 days |
+| METRICS_BEARER_TOKEN | Protect /api/metrics, /api/worker-metrics, and /api/worker-health | 180 days |
 
 Note: if you use VSB_USERNAME or VSB_PASSWORD, treat them the same as VSB_LOGIN_*.
 

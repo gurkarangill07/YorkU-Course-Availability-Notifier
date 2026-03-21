@@ -10,7 +10,9 @@ const { createLogger } = require("./logger");
 const { metrics } = require("./metrics");
 const {
   resolveWorkerHealthPath,
-  writeWorkerHealthSnapshot
+  resolveWorkerMetricsPath,
+  writeWorkerHealthSnapshot,
+  writeWorkerMetricsSnapshot
 } = require("./workerHealth");
 const {
   monitorOnce,
@@ -19,6 +21,7 @@ const {
 
 const workerLogger = createLogger({ component: "worker" });
 const workerHealthPath = resolveWorkerHealthPath(process.env);
+const workerMetricsPath = resolveWorkerMetricsPath(process.env);
 
 function sleep(ms) {
   return new Promise((resolve) => setTimeout(resolve, ms));
@@ -45,10 +48,14 @@ async function safeWriteWorkerHealth(snapshot) {
       },
       { healthPath: workerHealthPath }
     );
+    await writeWorkerMetricsSnapshot(metrics.renderPrometheus(), {
+      metricsPath: workerMetricsPath
+    });
   } catch (error) {
     workerLogger.warn("failed to write worker heartbeat", {
       event: "worker.health.write_failed",
       healthPath: workerHealthPath,
+      metricsPath: workerMetricsPath,
       error
     });
   }

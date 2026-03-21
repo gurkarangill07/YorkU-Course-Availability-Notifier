@@ -108,6 +108,29 @@ test("validateRuntimeConfig: invalid PORT is rejected", () => {
   assert.ok(result.errors.some((msg) => msg.includes("PORT")));
 });
 
+test("validateRuntimeConfig: invalid ops hardening values are rejected", () => {
+  const result = validate("worker", {
+    WORKER_HEALTH_ALERT_CONSECUTIVE_FAILURES: "0",
+    WORKER_SESSION_EXPIRED_ALERT_WINDOW_SECONDS: "abc",
+    MONITOR_SUPERVISOR_CRASH_LOOP_MAX_RESTARTS: "-1"
+  });
+  assert.ok(
+    result.errors.some((msg) =>
+      msg.includes("WORKER_HEALTH_ALERT_CONSECUTIVE_FAILURES")
+    )
+  );
+  assert.ok(
+    result.errors.some((msg) =>
+      msg.includes("WORKER_SESSION_EXPIRED_ALERT_WINDOW_SECONDS")
+    )
+  );
+  assert.ok(
+    result.errors.some((msg) =>
+      msg.includes("MONITOR_SUPERVISOR_CRASH_LOOP_MAX_RESTARTS")
+    )
+  );
+});
+
 test("config validate script supports worker init_login mode", () => {
   const scriptPath = path.join(__dirname, "..", "scripts", "validate-config.js");
   const result = spawnSync(
