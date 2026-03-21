@@ -192,6 +192,19 @@ function validateRuntimeConfig({ env = process.env, runtime, mode } = {}) {
   validateIntEnv("AUTH_OTP_RESEND_COOLDOWN_SECONDS", env, { min: 1 }, errors);
   validateIntEnv("AUTH_OTP_MAX_FAILED_ATTEMPTS", env, { min: 1 }, errors);
   validateIntEnv("AUTH_SESSION_DAYS", env, { min: 1 }, errors);
+  validateIntEnv("AUTH_RATE_LIMIT_WINDOW_SECONDS", env, { min: 1 }, errors);
+  validateIntEnv("AUTH_SEND_OTP_MAX_PER_IP", env, { min: 1 }, errors);
+  validateIntEnv("AUTH_SEND_OTP_MAX_PER_EMAIL", env, { min: 1 }, errors);
+  validateIntEnv("AUTH_VERIFY_OTP_MAX_PER_IP", env, { min: 1 }, errors);
+  validateIntEnv("AUTH_VERIFY_OTP_MAX_PER_EMAIL", env, { min: 1 }, errors);
+  validateIntEnv("AUTH_VERIFY_OTP_LOCKOUT_SECONDS", env, { min: 1 }, errors);
+  validateIntEnv(
+    "AUTHENTICATED_WRITE_RATE_LIMIT_WINDOW_SECONDS",
+    env,
+    { min: 1 },
+    errors
+  );
+  validateIntEnv("AUTHENTICATED_WRITE_RATE_LIMIT_MAX", env, { min: 1 }, errors);
   validateIntEnv("WORKER_HEALTH_MAX_STALE_SECONDS", env, { min: 1 }, errors);
   validateIntEnv("PORT", env, { min: 1, max: 65535 }, errors);
   validateIntEnv("SMTP_PORT", env, { min: 1, max: 65535 }, errors);

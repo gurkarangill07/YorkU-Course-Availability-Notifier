@@ -55,11 +55,15 @@ Goal: prevent unauthorized read/write of tracking data.
 Delivered so far:
 
 - Secret manager/env policy, rotation process, deployment checklist, and least-privilege access guidance are documented (`docs/SECRETS.md`, `docs/DEPLOYMENT.md`).
+- Passwordless auth/session flow is implemented with:
+  - OTP resend cooldowns and failed-attempt caps
+  - route-level rate limiting on OTP and authenticated write endpoints
+  - DB-backed shared rate limiting across API instances
 
-- Keep passwordless auth/session flow and harden it for production.
-- Enforce stronger abuse controls (IP/device limits, lockouts, throttling).
-- Add session management and revocation UX.
-- Add route-level rate limiting and stricter input validation.
+Remaining:
+
+- Add optional stronger device fingerprinting / anomaly detection if public traffic grows.
+- Consider external identity provider support if OTP-only auth becomes a support burden.
 
 Exit criteria:
 - Only authenticated users can manage their own tracked courses.

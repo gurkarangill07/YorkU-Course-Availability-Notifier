@@ -258,6 +258,9 @@
                 const error = new Error((data && data.error) || `Request failed (${response.status})`);
                 error.status = response.status;
                 error.data = data;
+                if (response.status === 401) {
+                    handleSessionInvalidation('Session expired or was revoked. Sign in again.');
+                }
                 throw error;
             }
             return data;
@@ -276,6 +279,14 @@
             document.getElementById('courseCode').disabled = !enabled;
             document.getElementById('courseName').disabled = !enabled;
             document.getElementById('trackBtn').disabled = !enabled;
+        }
+
+        function handleSessionInvalidation(message) {
+            authUser = null;
+            trackedCourses = [];
+            renderList();
+            updateAuthUi();
+            setAuthStatus(message || 'Session expired or was revoked. Sign in again.');
         }
 
         function normalizeCourseCodeInput(value) {
