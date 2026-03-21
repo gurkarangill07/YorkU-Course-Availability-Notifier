@@ -213,6 +213,20 @@ async function maybeSendAlerts({
   return { sent, skipped, errors };
 }
 
+async function readOptionalState(filePath, defaultValue) {
+  try {
+    return {
+      value: await readJsonFile(filePath, defaultValue),
+      error: null
+    };
+  } catch (error) {
+    return {
+      value: defaultValue,
+      error: error && error.message ? error.message : String(error)
+    };
+  }
+}
+
 async function main() {
   const args = parseCliArgs(process.argv.slice(2));
   const rootDir = path.join(__dirname, "..");
@@ -253,11 +267,13 @@ async function main() {
 
   if (args.alertOnFailure || args.restart !== "none") {
     const watchdogStatePath = resolveWatchdogStatePath(process.env);
-    const supervisorState = await readJsonFile(
+    const supervisorStateResult = await readOptionalState(
       resolveSupervisorStatePath(process.env),
       null
     );
-    const previousState = await readJsonFile(watchdogStatePath, {});
+    const previousStateResult = await readOptionalState(watchdogStatePath, {});
+    const supervisorState = supervisorStateResult.value;
+    const previousState = previousStateResult.value;
     const evaluation = evaluateWatchdog({
       status,
       snapshot,
@@ -297,6 +313,12 @@ async function main() {
       evaluation.sessionExpiryEventsInWindow;
     payload.restartAction = restartAction;
     payload.restartError = restartError;
+    if (supervisorStateResult.error) {
+      payload.supervisorStateReadError = supervisorStateResult.error;
+    }
+    if (previousStateResult.error) {
+      payload.watchdogStateReadError = previousStateResult.error;
+    }
   }
 
   console.log(JSON.stringify(payload, null, 2));

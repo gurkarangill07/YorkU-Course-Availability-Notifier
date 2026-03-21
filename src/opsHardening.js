@@ -154,10 +154,11 @@ function evaluateWatchdog({
     snapshot,
     "coursenotif_worker_session_expired_loop_total"
   );
-  const sessionExpiredDelta = Math.max(
-    0,
-    currentSessionExpiredCount - nextState.previousSessionExpiredCount
-  );
+  const priorSessionExpiredCount = nextState.previousSessionExpiredCount;
+  const sessionExpiredDelta =
+    currentSessionExpiredCount < priorSessionExpiredCount
+      ? currentSessionExpiredCount
+      : Math.max(0, currentSessionExpiredCount - priorSessionExpiredCount);
   const sessionWindowMs = watchdogConfig.sessionExpiryWindowSeconds * 1000;
   const sessionExpiredEventTimestamps = pruneRecentTimestamps(
     nextState.sessionExpiredEventTimestamps,
@@ -217,6 +218,7 @@ function evaluateWatchdog({
 
   if (
     supervisorState &&
+    (!status || status.reason !== "disabled") &&
     Number(supervisorState.restartCountInWindow || 0) >=
       watchdogConfig.supervisorCrashLoopThreshold &&
     Boolean(supervisorState.crashLoopActive)

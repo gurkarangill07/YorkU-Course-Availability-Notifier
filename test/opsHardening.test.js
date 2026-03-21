@@ -128,6 +128,36 @@ test("evaluateWatchdog deduplicates repeated session-expiry alerts within cooldo
   assert.equal(secondResult.sessionExpiryEventsInWindow, 3);
 });
 
+test("evaluateWatchdog treats lower post-restart session counters as a reset, not as zero new events", () => {
+  const nowMs = Date.parse("2026-03-21T18:10:00.000Z");
+  const result = evaluateWatchdog({
+    status: {
+      ok: true,
+      reason: "healthy"
+    },
+    snapshot: createSnapshotWithCounters({
+      coursenotif_worker_session_expired_loop_total: 1
+    }),
+    previousState: {
+      previousSessionExpiredCount: 5,
+      sessionExpiredEventTimestamps: [],
+      lastAlertAtByKey: {}
+    },
+    supervisorState: null,
+    config: createWatchdogConfig({
+      sessionExpiryThreshold: 1
+    }),
+    nowMs
+  });
+
+  assert.equal(result.sessionExpiredDelta, 1);
+  assert.equal(result.sessionExpiryEventsInWindow, 1);
+  assert.deepEqual(
+    result.alerts.map((alert) => alert.key),
+    ["session_expiry_loop"]
+  );
+});
+
 test("evaluateWatchdog alerts on supervisor crash-loop state", () => {
   const nowMs = Date.parse("2026-03-21T18:15:00.000Z");
   const result = evaluateWatchdog({
@@ -152,5 +182,28 @@ test("evaluateWatchdog alerts on supervisor crash-loop state", () => {
     ["supervisor_crash_loop"]
   );
   assert.equal(result.alerts[0].restartCountInWindow, 6);
+  assert.equal(result.restart, null);
+});
+
+test("evaluateWatchdog suppresses supervisor crash-loop alerts while worker is intentionally disabled", () => {
+  const nowMs = Date.parse("2026-03-21T18:20:00.000Z");
+  const result = evaluateWatchdog({
+    status: {
+      ok: true,
+      reason: "disabled"
+    },
+    snapshot: createSnapshotWithCounters(),
+    previousState: {},
+    supervisorState: {
+      restartCountInWindow: 6,
+      crashLoopActive: true,
+      windowSeconds: 600,
+      lastExitCode: 0
+    },
+    config: createWatchdogConfig(),
+    nowMs
+  });
+
+  assert.deepEqual(result.alerts, []);
   assert.equal(result.restart, null);
 });
