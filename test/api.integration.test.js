@@ -282,6 +282,192 @@ test(
 );
 
 test(
+  "API integration: signed-in users can view recent notification attempts",
+  { skip: !process.env.DATABASE_URL },
+  async () => {
+    const db = createDb({ databaseUrl: process.env.DATABASE_URL });
+    await db.ensureCompatibility();
+
+    const otpCodesByEmail = new Map();
+    const notifierModule = {
+      sendLoginOtpEmail: async ({ toEmail, otpCode }) => {
+        otpCodesByEmail.set(String(toEmail || "").trim().toLowerCase(), String(otpCode || ""));
+      },
+      sendCourseOpenEmail: async () => ({ messageId: "test-message-id" }),
+      sendSessionExpiredEmail: async () => {}
+    };
+
+    const env = {
+      ...process.env,
+      OTP_PEPPER: process.env.OTP_PEPPER || "test-pepper",
+      AUTH_COOKIE_SECURE: "false"
+    };
+
+    const app = createApiApp({ db, notifierModule, env });
+    const server = http.createServer(app);
+
+    await new Promise((resolve) => server.listen(0, "127.0.0.1", resolve));
+    const address = server.address();
+    const baseUrl = `http://127.0.0.1:${address.port}`;
+
+    const suffix = randomSuffix();
+    const email = `notif-ui-${suffix}@example.com`;
+    const otherEmail = `notif-ui-other-${suffix}@example.com`;
+    const numericSuffix = String(suffix).replace(/\D/g, "").slice(-5).padStart(5, "0");
+    const primaryCartId = `B${numericSuffix}`;
+    const secondaryCartId = `C${numericSuffix}`;
+    const otherCartId = `D${numericSuffix}`;
+    const cleanupPool = new Pool({ connectionString: process.env.DATABASE_URL });
+
+    try {
+      await clearApiRateLimitKeys(cleanupPool, [
+        "ip:127.0.0.1",
+        `email:${email.toLowerCase()}`
+      ]);
+
+      const unauthList = await requestJson(baseUrl, "/api/notification-attempts");
+      assert.equal(unauthList.status, 401);
+
+      const sendOtp = await requestJson(baseUrl, "/api/auth/send-otp", {
+        method: "POST",
+        body: { email }
+      });
+      assert.equal(sendOtp.status, 200);
+
+      const otpCode = otpCodesByEmail.get(email.toLowerCase());
+      assert.ok(/^\d{6}$/.test(String(otpCode || "")));
+
+      const verifyOtp = await requestJson(baseUrl, "/api/auth/verify-otp", {
+        method: "POST",
+        body: { email, otp: otpCode }
+      });
+      assert.equal(verifyOtp.status, 200);
+      const sessionCookie = verifyOtp.cookieHeader;
+      const userId = Number(verifyOtp.json.user.id);
+      assert.ok(Number.isFinite(userId) && userId > 0);
+
+      await db.ensureCourseExists(primaryCartId);
+      await db.ensureCourseExists(secondaryCartId);
+      await db.ensureCourseExists(otherCartId);
+
+      await db.trackCourseForUser({
+        userId,
+        cartId: primaryCartId,
+        displayName: "EECS 1012"
+      });
+      await db.trackCourseForUser({
+        userId,
+        cartId: secondaryCartId,
+        displayName: "MATH 1090"
+      });
+
+      const primaryTracked = await db.getTrackedCourseByUserAndCart(userId, primaryCartId);
+      const secondaryTracked = await db.getTrackedCourseByUserAndCart(userId, secondaryCartId);
+      assert.ok(primaryTracked && secondaryTracked);
+
+      const retryingAttempt = await db.enqueueCourseOpenNotification({
+        userId,
+        userCourseId: primaryTracked.user_course_id,
+        cartId: primaryCartId,
+        toEmail: email,
+        courseName: "EECS 1012",
+        os: 1
+      });
+      await db.markNotificationAttemptFailure({
+        attemptId: retryingAttempt.attempt.id,
+        errorMessage: "smtp timeout",
+        nextStatus: "retrying",
+        nextRetryAt: new Date(Date.now() + 5 * 60 * 1000)
+      });
+
+      const sentAttempt = await db.enqueueCourseOpenNotification({
+        userId,
+        userCourseId: secondaryTracked.user_course_id,
+        cartId: secondaryCartId,
+        toEmail: email,
+        courseName: "MATH 1090",
+        os: 2
+      });
+      await db.markNotificationAttemptSent({
+        attemptId: sentAttempt.attempt.id,
+        providerMessageId: "provider-123"
+      });
+
+      const otherUser = await db.getOrCreateUserByEmail(otherEmail);
+      await db.trackCourseForUser({
+        userId: otherUser.id,
+        cartId: otherCartId,
+        displayName: "OTHER 1000"
+      });
+      const otherTracked = await db.getTrackedCourseByUserAndCart(otherUser.id, otherCartId);
+      assert.ok(otherTracked);
+      await db.enqueueCourseOpenNotification({
+        userId: otherUser.id,
+        userCourseId: otherTracked.user_course_id,
+        cartId: otherCartId,
+        toEmail: otherEmail,
+        courseName: "OTHER 1000",
+        os: 1
+      });
+
+      const list = await requestJson(baseUrl, "/api/notification-attempts?limit=10", {
+        cookie: sessionCookie
+      });
+      assert.equal(list.status, 200);
+      assert.equal(Array.isArray(list.json.items), true);
+      assert.equal(list.json.items.length, 2);
+      assert.deepEqual(
+        list.json.items.map((item) => item.courseName),
+        ["MATH 1090", "EECS 1012"]
+      );
+      assert.deepEqual(
+        list.json.items.map((item) => item.status),
+        ["sent", "retrying"]
+      );
+      assert.equal(list.json.items[0].toEmail, email.toLowerCase());
+      assert.equal(list.json.items[0].providerMessageId, "provider-123");
+      assert.equal(list.json.items[1].lastError, "smtp timeout");
+      assert.equal(
+        list.json.items.some((item) => item.toEmail === otherEmail.toLowerCase()),
+        false
+      );
+    } finally {
+      await clearApiRateLimitKeys(cleanupPool, [
+        `email:${email.toLowerCase()}`,
+        "ip:127.0.0.1"
+      ]);
+      await cleanupPool.query(
+        "DELETE FROM notification_attempts WHERE to_email = ANY($1::text[]) OR cart_id = ANY($2::text[])",
+        [[email.toLowerCase(), otherEmail.toLowerCase()], [primaryCartId, secondaryCartId, otherCartId]]
+      );
+      await cleanupPool.query(
+        "DELETE FROM user_courses WHERE user_id IN (SELECT id FROM users WHERE email = ANY($1::text[]))",
+        [[email.toLowerCase(), otherEmail.toLowerCase()]]
+      );
+      await cleanupPool.query(
+        "DELETE FROM courses WHERE cart_id = ANY($1::text[])",
+        [[primaryCartId, secondaryCartId, otherCartId]]
+      );
+      await cleanupPool.query(
+        "DELETE FROM auth_otp_challenges WHERE email = $1",
+        [email.toLowerCase()]
+      );
+      await cleanupPool.query(
+        "DELETE FROM auth_sessions WHERE user_id IN (SELECT id FROM users WHERE email = ANY($1::text[]))",
+        [[email.toLowerCase(), otherEmail.toLowerCase()]]
+      );
+      await cleanupPool.query(
+        "DELETE FROM users WHERE email = ANY($1::text[])",
+        [[email.toLowerCase(), otherEmail.toLowerCase()]]
+      );
+      await cleanupPool.end();
+      await db.close();
+      await new Promise((resolve) => server.close(resolve));
+    }
+  }
+);
+
+test(
   "API integration: auth rate limits are shared across app instances",
   { skip: !process.env.DATABASE_URL },
   async () => {

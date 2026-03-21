@@ -1,6 +1,6 @@
 # CourseNotif Context (Current Snapshot)
 
-Last updated: March 21, 2026 (auth recovery UX update)
+Last updated: March 21, 2026 (notification attempt reporting update)
 
 ## 1) Project identity
 
@@ -45,6 +45,7 @@ Last updated: March 21, 2026 (auth recovery UX update)
   - `POST /api/auth/verify-otp`
   - `POST /api/auth/logout`
   - `GET /api/tracked-courses` (auth required)
+  - `GET /api/notification-attempts` (auth required)
   - `POST /api/tracked-courses` (auth required)
   - `POST /api/tracked-courses/:id/pause` (auth required)
   - `POST /api/tracked-courses/:id/resume` (auth required)
@@ -67,6 +68,7 @@ Last updated: March 21, 2026 (auth recovery UX update)
   - adding tracked courses
   - optional custom course name
   - listing tracked courses with tracking status text
+  - showing recent notification attempts with delivery status, timestamps, and last error/provider detail
   - pause tracking
   - stop tracking
   - resume tracking (`Track Again`) for `paused`/`notified`/`invalid` states
@@ -153,7 +155,7 @@ Last updated: March 21, 2026 (auth recovery UX update)
   - auth hardening tests (`test/authHardening.test.js`)
   - ops hardening/watchdog tests (`test/opsHardening.test.js`)
   - deterministic browser-source tests for init-login recovery + auto-relogin (`test/vsbBrowserSource.test.js`)
-  - API auth + tracked-course integration test (`test/api.integration.test.js`)
+  - API auth + tracked-course + notification-attempt integration tests (`test/api.integration.test.js`)
   - observability tests (`test/observability.test.js`, `test/logger.test.js`)
   - policy controls tests (`test/policyControls.test.js`)
 - CI workflow exists at `.github/workflows/ci.yml`
@@ -269,9 +271,9 @@ Last updated: March 21, 2026 (auth recovery UX update)
 ## 5) Immediate priorities
 
 1. Add live-site browser smoke coverage and selector-drift safeguards beyond the current deterministic browser harness
-2. Improve notification-attempt visibility (UI or admin API)
-3. Add an external identity provider or stronger auth-management surface if OTP-only auth becomes a support burden
-4. Add external dashboard/pager integration on top of the current file/email watchdog automation
+2. Add an external identity provider or stronger auth-management surface if OTP-only auth becomes a support burden
+3. Add external dashboard/pager integration on top of the current file/email watchdog automation
+4. Consider deeper notification-attempt filters/export only if support needs grow
 
 ## 6) Notes for future contributors/agents
 

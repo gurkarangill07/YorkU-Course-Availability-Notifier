@@ -1,6 +1,6 @@
 # CourseNotif Roadmap (Implementation-Aligned)
 
-Last updated: March 14, 2026
+Last updated: March 21, 2026
 
 Planning note: keep this file aligned with `README.md` and `context` after major implementation changes.
 
@@ -125,9 +125,10 @@ Delivered so far:
 - Pause/resume controls are implemented for tracked courses.
 - Cart ID validation is stricter (`A-Z0-9`, exactly 6 chars) with improved UI feedback.
 - Session/auth recovery guidance is now shown inline in the UI instead of relying on generic browser alerts for common sign-in, OTP, and session-expiry cases.
+- Recent notification-attempt reporting is available to signed-in users with status, timing, and last-error visibility for delivery troubleshooting.
 
 Remaining:
-- Improve notification-attempt visibility and user-facing delivery troubleshooting.
+- Add deeper notification-attempt filters/export only if support needs grow.
 
 Exit criteria:
 - Users can manage common tracking and recovery tasks from UI without manual support.

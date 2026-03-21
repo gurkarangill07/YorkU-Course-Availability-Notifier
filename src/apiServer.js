@@ -263,6 +263,35 @@ function mapTrackedCourseRow(row) {
   };
 }
 
+function mapNotificationAttemptForApi(attempt) {
+  if (!attempt) {
+    return null;
+  }
+
+  return {
+    id: Number(attempt.id),
+    eventType: attempt.eventType || null,
+    cartId: attempt.cartId || null,
+    courseName: attempt.courseName || attempt.cartId || "Tracked course",
+    toEmail: attempt.toEmail || null,
+    status: attempt.status || "pending",
+    attemptCount: Number.isFinite(Number(attempt.attemptCount))
+      ? Number(attempt.attemptCount)
+      : 0,
+    maxAttempts: Number.isFinite(Number(attempt.maxAttempts))
+      ? Number(attempt.maxAttempts)
+      : 1,
+    nextRetryAt: attempt.nextRetryAt || null,
+    lastAttemptedAt: attempt.lastAttemptedAt || null,
+    sentAt: attempt.sentAt || null,
+    suppressedUntil: attempt.suppressedUntil || null,
+    providerMessageId: attempt.providerMessageId || null,
+    lastError: attempt.lastError || null,
+    createdAt: attempt.createdAt || null,
+    updatedAt: attempt.updatedAt || null
+  };
+}
+
 function createApiApp({
   db,
   notifierModule = defaultNotifier,
@@ -824,6 +853,20 @@ function createApiApp({
     try {
       const items = await db.listTrackedCoursesByUser(req.auth.userId);
       return res.json({ items: items.map(mapTrackedCourseRow) });
+    } catch (error) {
+      return next(error);
+    }
+  });
+
+  app.get("/api/notification-attempts", requireAuth, async (req, res, next) => {
+    try {
+      const limit = Math.min(50, parseIntWithFallback(req.query.limit, 10));
+      const items = await db.listNotificationAttemptsByUser(req.auth.userId, {
+        limit
+      });
+      return res.json({
+        items: items.map(mapNotificationAttemptForApi).filter(Boolean)
+      });
     } catch (error) {
       return next(error);
     }
