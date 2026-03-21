@@ -829,7 +829,6 @@ async function monitorOnce({
         summary.stopped += 1;
       }
     } catch (error) {
-      summary.failures += 1;
       if (isSessionFailure(error)) {
         if (typeof vsbSource.tryAutoRelogin === "function") {
           try {
@@ -884,6 +883,7 @@ async function monitorOnce({
           }
         }
 
+        summary.failures += 1;
         await notifySessionFailureIfNeeded({
           db,
           notifier,
@@ -892,6 +892,7 @@ async function monitorOnce({
         });
         break;
       }
+      summary.failures += 1;
       monitorLogger.error("tracked course processing failed", {
         event: "monitor.scan.course_failure",
         userCourseId: target.user_course_id,

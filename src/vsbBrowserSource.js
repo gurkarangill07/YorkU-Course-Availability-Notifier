@@ -119,12 +119,13 @@ function escapeRegExp(value) {
   return String(value).replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 }
 
-function createVsbBrowserSource(db, config) {
+function createVsbBrowserSource(db, config, dependencies = {}) {
   let context = null;
   let page = null;
   let hasSyncedTrackedCoursesForContext = false;
   const coursePresenceCache = new Map();
   const coursePresenceCacheTtlMs = 45 * 60 * 1000;
+  const injectedPlaywright = dependencies.playwright || null;
 
   function normalizeCartId(value) {
     return String(value || "").trim().toUpperCase();
@@ -193,6 +194,9 @@ function createVsbBrowserSource(db, config) {
   }
 
   function requirePlaywright() {
+    if (injectedPlaywright) {
+      return injectedPlaywright;
+    }
     try {
       return require("playwright");
     } catch (_) {

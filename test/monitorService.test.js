@@ -28,6 +28,16 @@ function makeAttempt(overrides = {}) {
   };
 }
 
+function makeJspCandidate(cartId, os, generatedAt = new Date().toISOString()) {
+  return {
+    fileName: "getClassData.jsp",
+    jspBody: JSON.stringify([{ cartid: cartId, os, code: "EECS 1001" }]),
+    sourcePath: null,
+    payloadHash: `hash-${cartId}-${os}`,
+    generatedAt
+  };
+}
+
 async function runDispatchCase({ notifierSendImpl }) {
   const state = {
     claimArgs: null,
@@ -343,4 +353,181 @@ test("monitor forces a fresh capture for courses flagged requires_fresh_scan", a
   assert.equal(summary.scanned, 1);
   assert.equal(summary.queued, 0);
   assert.equal(summary.failures, 0);
+});
+
+test("monitor auto re-login recovers an inactive shared session before scanning", async () => {
+  const state = {
+    reloginReasons: [],
+    dispatchClaimArgs: null
+  };
+  const nowIso = new Date().toISOString();
+
+  const db = {
+    getSharedSession: async () => ({
+      session_state: "expired",
+      session_expires_at: null
+    }),
+    listTrackedCourses: async () => [
+      {
+        user_course_id: 91,
+        user_id: 42,
+        cart_id: "ABC123",
+        email: "test@example.com",
+        created_at: nowIso
+      }
+    ],
+    getSharedLatestJspFile: async () => null,
+    saveSharedLatestJspFile: async () => {},
+    upsertCourseFromJsp: async () => {},
+    resetUserCourseInvalidAttempts: async () => {},
+    enqueueCourseOpenNotification: async () => {
+      throw new Error("enqueueCourseOpenNotification should not be called for os=0");
+    },
+    claimDueNotificationAttempts: async (args) => {
+      state.dispatchClaimArgs = args;
+      return [];
+    },
+    markNotificationAttemptSent: async () => {
+      throw new Error("markNotificationAttemptSent should not be called");
+    },
+    markNotificationAttemptFailure: async () => {
+      throw new Error("markNotificationAttemptFailure should not be called");
+    },
+    markSharedSessionExpired: async () => ({ wasAlreadyExpired: false })
+  };
+
+  const vsbSource = {
+    tryAutoRelogin: async ({ reason }) => {
+      state.reloginReasons.push(reason);
+      return { ok: true };
+    },
+    collectGetClassDataCandidates: async () => [makeJspCandidate("ABC123", 0, nowIso)],
+    pickLatestJspFile: (candidates) => candidates[0]
+  };
+
+  const notifier = {
+    sendCourseOpenEmail: async () => ({ messageId: "provider-mid" }),
+    sendSessionExpiredEmail: async () => {
+      throw new Error("sendSessionExpiredEmail should not be called on successful recovery");
+    }
+  };
+
+  const summary = await monitorOnce({
+    db,
+    vsbSource,
+    notifier,
+    ownerAlertEmail: "owner@example.com",
+    notificationPolicy: {
+      retryBaseSeconds: 30,
+      retryMaxSeconds: 900,
+      maxAttempts: 5,
+      suppressionWindowMinutes: 30,
+      dispatchBatchSize: 25,
+      dispatchLeaseSeconds: 222
+    }
+  });
+
+  assert.deepEqual(state.reloginReasons, ["session_state_not_ok"]);
+  assert.equal(state.dispatchClaimArgs.leaseSeconds, 222);
+  assert.equal(summary.scanned, 1);
+  assert.equal(summary.failures, 0);
+  assert.equal(summary.dispatchClaimed, 0);
+});
+
+test("monitor retries a tracked course after mid-scan session recovery", async () => {
+  const state = {
+    reloginReasons: [],
+    collectArgs: [],
+    dispatchClaimArgs: null
+  };
+  const nowIso = new Date().toISOString();
+  let collectCalls = 0;
+
+  const db = {
+    getSharedSession: async () => ({
+      session_state: "ok",
+      session_expires_at: new Date(Date.now() + 10 * 60 * 1000).toISOString()
+    }),
+    listTrackedCourses: async () => [
+      {
+        user_course_id: 92,
+        user_id: 42,
+        cart_id: "ABC123",
+        email: "test@example.com",
+        created_at: nowIso
+      }
+    ],
+    getSharedLatestJspFile: async () => null,
+    saveSharedLatestJspFile: async () => {},
+    upsertCourseFromJsp: async () => {},
+    resetUserCourseInvalidAttempts: async () => {},
+    enqueueCourseOpenNotification: async () => {
+      throw new Error("enqueueCourseOpenNotification should not be called for os=0");
+    },
+    claimDueNotificationAttempts: async (args) => {
+      state.dispatchClaimArgs = args;
+      return [];
+    },
+    markNotificationAttemptSent: async () => {
+      throw new Error("markNotificationAttemptSent should not be called");
+    },
+    markNotificationAttemptFailure: async () => {
+      throw new Error("markNotificationAttemptFailure should not be called");
+    },
+    markSharedSessionExpired: async () => ({ wasAlreadyExpired: false })
+  };
+
+  const vsbSource = {
+    tryAutoRelogin: async ({ reason }) => {
+      state.reloginReasons.push(reason);
+      return { ok: true };
+    },
+    collectGetClassDataCandidates: async (args = {}) => {
+      state.collectArgs.push(args);
+      collectCalls += 1;
+      if (collectCalls === 1) {
+        throw new Error("VSB session/login required: Enter Course field not available.");
+      }
+      return [makeJspCandidate("ABC123", 0, nowIso)];
+    },
+    pickLatestJspFile: (candidates) => candidates[0]
+  };
+
+  const notifier = {
+    sendCourseOpenEmail: async () => ({ messageId: "provider-mid" }),
+    sendSessionExpiredEmail: async () => {
+      throw new Error("sendSessionExpiredEmail should not be called on successful mid-scan recovery");
+    }
+  };
+
+  const summary = await monitorOnce({
+    db,
+    vsbSource,
+    notifier,
+    ownerAlertEmail: "owner@example.com",
+    notificationPolicy: {
+      retryBaseSeconds: 30,
+      retryMaxSeconds: 900,
+      maxAttempts: 5,
+      suppressionWindowMinutes: 30,
+      dispatchBatchSize: 25,
+      dispatchLeaseSeconds: 222
+    }
+  });
+
+  assert.deepEqual(state.reloginReasons, ["mid_scan_session_failure"]);
+  assert.deepEqual(state.collectArgs, [
+    {
+      cartId: "ABC123",
+      forceRefresh: true
+    },
+    {
+      cartId: "ABC123",
+      forceRefresh: true
+    }
+  ]);
+  assert.equal(state.dispatchClaimArgs.leaseSeconds, 222);
+  assert.equal(summary.scanned, 1);
+  assert.equal(summary.failures, 0);
+  assert.equal(summary.queued, 0);
 });
