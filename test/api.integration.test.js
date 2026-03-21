@@ -292,3 +292,81 @@ test(
     }
   }
 );
+
+test(
+  "API integration: auth rate limits are shared across app instances",
+  { skip: !process.env.DATABASE_URL },
+  async () => {
+    const db = createDb({ databaseUrl: process.env.DATABASE_URL });
+    await db.ensureCompatibility();
+
+    const notifierModule = {
+      sendLoginOtpEmail: async () => {},
+      sendCourseOpenEmail: async () => ({ messageId: "test-message-id" }),
+      sendSessionExpiredEmail: async () => {}
+    };
+
+    const env = {
+      ...process.env,
+      OTP_PEPPER: process.env.OTP_PEPPER || "test-pepper",
+      AUTH_COOKIE_SECURE: "false",
+      AUTH_OTP_MAX_FAILED_ATTEMPTS: "10",
+      AUTH_RATE_LIMIT_WINDOW_SECONDS: "60",
+      AUTH_VERIFY_OTP_MAX_PER_IP: "1000",
+      AUTH_VERIFY_OTP_MAX_PER_EMAIL: "2",
+      AUTH_VERIFY_OTP_LOCKOUT_SECONDS: "120"
+    };
+
+    const appOne = createApiApp({ db, notifierModule, env });
+    const appTwo = createApiApp({ db, notifierModule, env });
+    const serverOne = http.createServer(appOne);
+    const serverTwo = http.createServer(appTwo);
+
+    await new Promise((resolve) => serverOne.listen(0, "127.0.0.1", resolve));
+    await new Promise((resolve) => serverTwo.listen(0, "127.0.0.1", resolve));
+    const baseUrlOne = `http://127.0.0.1:${serverOne.address().port}`;
+    const baseUrlTwo = `http://127.0.0.1:${serverTwo.address().port}`;
+
+    const suffix = randomSuffix();
+    const email = `shared-limit-${suffix}@example.com`;
+    const cleanupPool = new Pool({ connectionString: process.env.DATABASE_URL });
+
+    try {
+      await db.invalidateActiveOtpChallengesByEmail(email);
+      await db.createOtpChallenge({
+        email,
+        otpHash: hashSha256(`${email}|123456|${env.OTP_PEPPER}`),
+        expiresAt: new Date(Date.now() + 10 * 60 * 1000)
+      });
+
+      const first = await requestJson(baseUrlOne, "/api/auth/verify-otp", {
+        method: "POST",
+        body: { email, otp: "000000" }
+      });
+      const second = await requestJson(baseUrlTwo, "/api/auth/verify-otp", {
+        method: "POST",
+        body: { email, otp: "000000" }
+      });
+      const third = await requestJson(baseUrlOne, "/api/auth/verify-otp", {
+        method: "POST",
+        body: { email, otp: "000000" }
+      });
+
+      assert.equal(first.status, 400);
+      assert.equal(second.status, 400);
+      assert.equal(third.status, 429);
+      assert.match(String(third.json.error || ""), /too many otp verification attempts/i);
+    } finally {
+      await cleanupPool.query("DELETE FROM api_rate_limits WHERE limiter_key = $1", [
+        `email:${email}`
+      ]);
+      await cleanupPool.query("DELETE FROM auth_otp_challenges WHERE email = $1", [
+        email
+      ]);
+      await cleanupPool.end();
+      await db.close();
+      await new Promise((resolve) => serverOne.close(resolve));
+      await new Promise((resolve) => serverTwo.close(resolve));
+    }
+  }
+);

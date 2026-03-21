@@ -56,6 +56,7 @@ Last updated: March 14, 2026
 - Auth hardening now includes:
   - route-level rate limiting on OTP endpoints
   - authenticated write throttling on tracked-course and session-revocation endpoints
+  - DB-backed shared rate limiting across API instances
   - session activity tracking + per-session revocation APIs
 - Serves `index.html` at `GET /`
 
@@ -240,7 +241,7 @@ Last updated: March 14, 2026
 
 1. Add browser-mode integration tests for session recovery and invalid-code paths
 2. Improve notification-attempt visibility (UI or admin API)
-3. Add a distributed/shared rate-limit backend if auth traffic needs to scale beyond one API instance
+3. Add an external identity provider or stronger auth-management surface if OTP-only auth becomes a support burden
 4. Add centralized alert routing/dashboard automation on top of current observability baseline
 
 ## 6) Notes for future contributors/agents

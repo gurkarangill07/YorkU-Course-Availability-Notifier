@@ -209,6 +209,37 @@ function createFixedWindowLimiter({
   };
 }
 
+function createRateLimitConsumer({
+  db,
+  windowMs,
+  maxRequests,
+  blockDurationMs = 0
+}) {
+  if (db && typeof db.consumeApiRateLimit === "function") {
+    return {
+      consume(key) {
+        return db.consumeApiRateLimit({
+          key,
+          windowMs,
+          maxRequests,
+          blockDurationMs
+        });
+      }
+    };
+  }
+
+  const fallbackLimiter = createFixedWindowLimiter({
+    windowMs,
+    maxRequests,
+    blockDurationMs
+  });
+  return {
+    async consume(key) {
+      return fallbackLimiter.consume(key);
+    }
+  };
+}
+
 function mapTrackedCourseRow(row) {
   const os = toNullableFiniteNumber(row.os);
   const lastObservedOs = toNullableFiniteNumber(row.last_observed_os);
@@ -311,32 +342,38 @@ function createApiApp({
     env.AUTHENTICATED_WRITE_RATE_LIMIT_MAX,
     30
   );
-  const sendOtpIpLimiter = createFixedWindowLimiter({
+  const sendOtpIpLimiter = createRateLimitConsumer({
+    db,
     windowMs: authRateLimitWindowMs,
     maxRequests: authSendOtpMaxPerIp,
     blockDurationMs: authRateLimitWindowMs
   });
-  const sendOtpEmailLimiter = createFixedWindowLimiter({
+  const sendOtpEmailLimiter = createRateLimitConsumer({
+    db,
     windowMs: authRateLimitWindowMs,
     maxRequests: authSendOtpMaxPerEmail,
     blockDurationMs: authRateLimitWindowMs
   });
-  const verifyOtpIpLimiter = createFixedWindowLimiter({
+  const verifyOtpIpLimiter = createRateLimitConsumer({
+    db,
     windowMs: authRateLimitWindowMs,
     maxRequests: authVerifyOtpMaxPerIp,
     blockDurationMs: authVerifyOtpLockoutMs
   });
-  const verifyOtpEmailLimiter = createFixedWindowLimiter({
+  const verifyOtpEmailLimiter = createRateLimitConsumer({
+    db,
     windowMs: authRateLimitWindowMs,
     maxRequests: authVerifyOtpMaxPerEmail,
     blockDurationMs: authVerifyOtpLockoutMs
   });
-  const authenticatedWriteUserLimiter = createFixedWindowLimiter({
+  const authenticatedWriteUserLimiter = createRateLimitConsumer({
+    db,
     windowMs: authenticatedWriteRateLimitWindowMs,
     maxRequests: authenticatedWriteRateLimitMax,
     blockDurationMs: authenticatedWriteRateLimitWindowMs
   });
-  const authenticatedWriteIpLimiter = createFixedWindowLimiter({
+  const authenticatedWriteIpLimiter = createRateLimitConsumer({
+    db,
     windowMs: authenticatedWriteRateLimitWindowMs,
     maxRequests: authenticatedWriteRateLimitMax,
     blockDurationMs: authenticatedWriteRateLimitWindowMs
@@ -390,35 +427,39 @@ function createApiApp({
     event,
     errorMessage
   }) {
-    return (req, res, next) => {
-      for (const limiterConfig of limiters) {
-        const key = limiterConfig.key(req);
-        const result = limiterConfig.limiter.consume(key);
-        if (result.allowed) {
-          continue;
-        }
+    return async (req, res, next) => {
+      try {
+        for (const limiterConfig of limiters) {
+          const key = limiterConfig.key(req);
+          const result = await limiterConfig.limiter.consume(key);
+          if (result.allowed) {
+            continue;
+          }
 
-        metrics.increment(
-          "api_rate_limit_rejections_total",
-          1,
-          "Total API requests rejected by route-level rate limiting."
-        );
-        logger.warn("request rate limited", {
-          event,
-          limiter: limiterConfig.name,
-          method: req.method,
-          path: req.path,
-          requestIp: getRequestIp(req),
-          keyHash: key ? hashSha256(key) : null,
-          retryAfterSeconds: result.retryAfterSeconds
-        });
-        res.set("Retry-After", String(result.retryAfterSeconds));
-        return res.status(429).json({
-          error: errorMessage,
-          retryAfterSeconds: result.retryAfterSeconds
-        });
+          metrics.increment(
+            "api_rate_limit_rejections_total",
+            1,
+            "Total API requests rejected by route-level rate limiting."
+          );
+          logger.warn("request rate limited", {
+            event,
+            limiter: limiterConfig.name,
+            method: req.method,
+            path: req.path,
+            requestIp: getRequestIp(req),
+            keyHash: key ? hashSha256(key) : null,
+            retryAfterSeconds: result.retryAfterSeconds
+          });
+          res.set("Retry-After", String(result.retryAfterSeconds));
+          return res.status(429).json({
+            error: errorMessage,
+            retryAfterSeconds: result.retryAfterSeconds
+          });
+        }
+        return next();
+      } catch (error) {
+        return next(error);
       }
-      return next();
     };
   }
 

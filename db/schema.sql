@@ -50,6 +50,15 @@ ALTER TABLE auth_sessions
 ALTER TABLE auth_sessions
   ADD COLUMN IF NOT EXISTS user_agent TEXT;
 
+-- Shared API rate limiting state so multiple API instances enforce the same limits.
+CREATE TABLE IF NOT EXISTS api_rate_limits (
+  limiter_key TEXT PRIMARY KEY,
+  window_started_at TIMESTAMPTZ NOT NULL,
+  request_count INTEGER NOT NULL DEFAULT 0 CHECK (request_count >= 0),
+  blocked_until TIMESTAMPTZ,
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
 CREATE TABLE IF NOT EXISTS courses (
   cart_id TEXT PRIMARY KEY,
   course_name TEXT NOT NULL,
@@ -202,5 +211,7 @@ CREATE INDEX IF NOT EXISTS idx_auth_otp_challenges_email_created_at
   ON auth_otp_challenges(email, created_at DESC);
 CREATE INDEX IF NOT EXISTS idx_auth_sessions_user_id ON auth_sessions(user_id);
 CREATE INDEX IF NOT EXISTS idx_auth_sessions_token_hash ON auth_sessions(token_hash);
+CREATE INDEX IF NOT EXISTS idx_api_rate_limits_updated_at
+  ON api_rate_limits(updated_at);
 
 COMMIT;

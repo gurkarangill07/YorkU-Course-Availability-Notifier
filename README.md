@@ -18,6 +18,7 @@ CourseNotif monitors tracked courses and notifies users when seats open (`os > 0
 - Auth hardening includes:
   - OTP resend cooldowns and max failed-attempt caps
   - route-level rate limits for OTP and authenticated write endpoints
+  - shared DB-backed rate limiting across API instances
   - session revocation endpoints (`/api/auth/sessions`, `/api/auth/logout-others`)
 - Monitoring worker (`src/worker.js`) with modes:
   - `--init-login`
@@ -379,7 +380,7 @@ bash scripts/uninstall-monitor-launchd.sh
 ## Current limitations
 
 - No dedicated UI/reporting page for notification delivery attempts yet.
-- OTP auth is implemented, but no external identity provider and no distributed/shared rate-limit backend yet.
+- OTP auth is implemented, but no external identity provider yet.
 - Test coverage is still limited and does not yet cover full browser automation paths.
 
 ## Runbooks

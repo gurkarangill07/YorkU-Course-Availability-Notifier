@@ -88,6 +88,7 @@ function createDb({ databaseUrl }) {
     process.env.PG_SSL_REJECT_UNAUTHORIZED,
     true
   );
+  let apiRateLimitOperationCount = 0;
   const pool = new Pool({
     connectionString: databaseUrl,
     ...(sslRejectUnauthorized === false
@@ -237,10 +238,20 @@ function createDb({ databaseUrl }) {
           ALTER TABLE auth_sessions
           ADD COLUMN IF NOT EXISTS user_agent TEXT;
 
+          CREATE TABLE IF NOT EXISTS api_rate_limits (
+            limiter_key TEXT PRIMARY KEY,
+            window_started_at TIMESTAMPTZ NOT NULL,
+            request_count INTEGER NOT NULL DEFAULT 0 CHECK (request_count >= 0),
+            blocked_until TIMESTAMPTZ,
+            updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+          );
+
           CREATE INDEX IF NOT EXISTS idx_auth_otp_challenges_email_created_at
             ON auth_otp_challenges(email, created_at DESC);
           CREATE INDEX IF NOT EXISTS idx_auth_sessions_user_id ON auth_sessions(user_id);
           CREATE INDEX IF NOT EXISTS idx_auth_sessions_token_hash ON auth_sessions(token_hash);
+          CREATE INDEX IF NOT EXISTS idx_api_rate_limits_updated_at
+            ON api_rate_limits(updated_at);
           `
         );
 
@@ -426,6 +437,12 @@ function createDb({ databaseUrl }) {
       DELETE FROM auth_sessions
       WHERE (revoked_at IS NOT NULL OR expires_at < NOW())
         AND created_at < NOW() - INTERVAL '7 days'
+      `
+    );
+    await pool.query(
+      `
+      DELETE FROM api_rate_limits
+      WHERE updated_at < NOW() - INTERVAL '2 days'
       `
     );
   }
@@ -653,6 +670,150 @@ function createDb({ databaseUrl }) {
       [userId, currentSessionId]
     );
     return rowCount;
+  }
+
+  async function consumeApiRateLimit({
+    key,
+    windowMs,
+    maxRequests,
+    blockDurationMs = 0
+  }) {
+    if (!key) {
+      return { allowed: true };
+    }
+
+    const client = await pool.connect();
+    try {
+      await client.query("BEGIN");
+      const { rows } = await client.query(
+        `
+        SELECT
+          limiter_key,
+          window_started_at,
+          request_count,
+          blocked_until,
+          updated_at
+        FROM api_rate_limits
+        WHERE limiter_key = $1
+        FOR UPDATE
+        `,
+        [key]
+      );
+
+      const now = Date.now();
+      const existing = rows[0] || null;
+      if (!existing) {
+        await client.query(
+          `
+          INSERT INTO api_rate_limits (
+            limiter_key,
+            window_started_at,
+            request_count,
+            blocked_until,
+            updated_at
+          )
+          VALUES ($1, NOW(), 1, NULL, NOW())
+          `,
+          [key]
+        );
+        await client.query("COMMIT");
+        return { allowed: true };
+      }
+
+      const blockedUntilMs = existing.blocked_until
+        ? new Date(existing.blocked_until).getTime()
+        : NaN;
+      if (Number.isFinite(blockedUntilMs) && blockedUntilMs > now) {
+        await client.query("COMMIT");
+        return {
+          allowed: false,
+          retryAfterSeconds: Math.max(
+            1,
+            Math.ceil((blockedUntilMs - now) / 1000)
+          )
+        };
+      }
+
+      const windowStartedMs = new Date(existing.window_started_at).getTime();
+      const windowExpired =
+        !Number.isFinite(windowStartedMs) || windowStartedMs + windowMs <= now;
+      if (windowExpired) {
+        await client.query(
+          `
+          UPDATE api_rate_limits
+          SET
+            window_started_at = NOW(),
+            request_count = 1,
+            blocked_until = NULL,
+            updated_at = NOW()
+          WHERE limiter_key = $1
+          `,
+          [key]
+        );
+        await client.query("COMMIT");
+        return { allowed: true };
+      }
+
+      const nextCount = Number(existing.request_count || 0) + 1;
+      if (nextCount <= maxRequests) {
+        await client.query(
+          `
+          UPDATE api_rate_limits
+          SET
+            request_count = $2,
+            blocked_until = NULL,
+            updated_at = NOW()
+          WHERE limiter_key = $1
+          `,
+          [key, nextCount]
+        );
+        await client.query("COMMIT");
+        return { allowed: true };
+      }
+
+      const retryAfterMs =
+        blockDurationMs > 0
+          ? blockDurationMs
+          : Math.max(1000, windowStartedMs + windowMs - now);
+      const blockedUntil =
+        blockDurationMs > 0 ? new Date(now + blockDurationMs) : null;
+      await client.query(
+        `
+        UPDATE api_rate_limits
+        SET
+          request_count = $2,
+          blocked_until = $3,
+          updated_at = NOW()
+        WHERE limiter_key = $1
+        `,
+        [key, nextCount, blockedUntil]
+      );
+      await client.query("COMMIT");
+      return {
+        allowed: false,
+        retryAfterSeconds: Math.max(1, Math.ceil(retryAfterMs / 1000))
+      };
+    } catch (error) {
+      try {
+        await client.query("ROLLBACK");
+      } catch (_) {
+        // Ignore rollback failures from already-closed/aborted sessions.
+      }
+      throw error;
+    } finally {
+      client.release();
+      apiRateLimitOperationCount += 1;
+      if (apiRateLimitOperationCount % 100 === 0) {
+        pool
+          .query(
+            `
+            DELETE FROM api_rate_limits
+            WHERE updated_at < NOW() - INTERVAL '2 days'
+            `
+          )
+          .catch(() => {});
+      }
+    }
   }
 
   async function getTrackedCourseByUserAndCart(userId, cartId) {
@@ -1610,6 +1771,7 @@ function createDb({ databaseUrl }) {
     listAuthSessionsByUser,
     revokeAuthSessionByIdForUser,
     revokeOtherAuthSessionsForUser,
+    consumeApiRateLimit,
     getUserByEmail,
     getOrCreateUserByEmail,
     listTrackedCourses,

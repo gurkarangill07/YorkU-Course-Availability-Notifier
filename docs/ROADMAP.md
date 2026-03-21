@@ -63,7 +63,6 @@ Delivered so far:
 
 Remaining:
 
-- Move rate limiting/abuse controls to shared storage if API runs in multiple instances.
 - Add optional stronger device fingerprinting / anomaly detection if public traffic grows.
 - Consider external identity provider support if OTP-only auth becomes a support burden.
 
