@@ -206,6 +206,58 @@ function validateRuntimeConfig({ env = process.env, runtime, mode } = {}) {
   );
   validateIntEnv("AUTHENTICATED_WRITE_RATE_LIMIT_MAX", env, { min: 1 }, errors);
   validateIntEnv("WORKER_HEALTH_MAX_STALE_SECONDS", env, { min: 1 }, errors);
+  validateIntEnv(
+    "WORKER_HEALTH_ALERT_CONSECUTIVE_FAILURES",
+    env,
+    { min: 1 },
+    errors
+  );
+  validateIntEnv(
+    "WORKER_SESSION_EXPIRED_ALERT_THRESHOLD",
+    env,
+    { min: 1 },
+    errors
+  );
+  validateIntEnv(
+    "WORKER_SESSION_EXPIRED_ALERT_WINDOW_SECONDS",
+    env,
+    { min: 1 },
+    errors
+  );
+  validateIntEnv("WORKER_ALERT_COOLDOWN_SECONDS", env, { min: 1 }, errors);
+  validateIntEnv(
+    "WORKER_HEALTH_RESTART_CONSECUTIVE_FAILURES",
+    env,
+    { min: 1 },
+    errors
+  );
+  validateIntEnv("WORKER_RESTART_COOLDOWN_SECONDS", env, { min: 1 }, errors);
+  validateIntEnv(
+    "MONITOR_SUPERVISOR_CRASH_LOOP_MAX_RESTARTS",
+    env,
+    { min: 1 },
+    errors
+  );
+  validateIntEnv("MONITOR_SUPERVISOR_RESTART_SECONDS", env, { min: 1 }, errors);
+  validateIntEnv(
+    "MONITOR_SUPERVISOR_CRASH_LOOP_WINDOW_SECONDS",
+    env,
+    { min: 1 },
+    errors
+  );
+  validateIntEnv(
+    "MONITOR_SUPERVISOR_MAX_RESTART_SECONDS",
+    env,
+    { min: 1 },
+    errors
+  );
+  validateIntEnv(
+    "MONITOR_SUPERVISOR_WATCHDOG_INTERVAL_SECONDS",
+    env,
+    { min: 1 },
+    errors
+  );
+  validateIntEnv("WORKER_WATCHDOG_INTERVAL_SECONDS", env, { min: 1 }, errors);
   validateIntEnv("PORT", env, { min: 1, max: 65535 }, errors);
   validateIntEnv("SMTP_PORT", env, { min: 1, max: 65535 }, errors);
   validateIntEnv("DB_COMPATIBILITY_RETRY_ATTEMPTS", env, { min: 1 }, errors);

@@ -1,6 +1,6 @@
 # CourseNotif Operations Runbook
 
-Last updated: March 10, 2026
+Last updated: March 21, 2026
 
 ## Scope
 
@@ -26,18 +26,28 @@ npm run monitor:health
 
 # Metrics
 curl -sS http://localhost:3000/api/metrics
+
+# Worker-only metrics
+curl -sS http://localhost:3000/api/worker-metrics
 ```
 
 If `METRICS_BEARER_TOKEN` is configured:
 
 ```bash
 curl -sS -H "Authorization: Bearer $METRICS_BEARER_TOKEN" http://localhost:3000/api/metrics
+curl -sS -H "Authorization: Bearer $METRICS_BEARER_TOKEN" http://localhost:3000/api/worker-metrics
 curl -sS -H "Authorization: Bearer $METRICS_BEARER_TOKEN" http://localhost:3000/api/worker-health
+```
+
+Automated watchdog check:
+
+```bash
+node scripts/check-worker-health.js --alert-on-failure --restart supervisor
 ```
 
 ## Alert conditions (recommended)
 
-Use these as baseline thresholds; tune based on real traffic.
+Use these as baseline thresholds; tune based on real traffic. The watchdog automation now supports these through env-driven thresholds and cooldowns.
 
 1. Worker unhealthy:
 - Trigger when `/api/worker-health` returns non-200 for >= 2 consecutive checks.
@@ -58,6 +68,20 @@ Use these as baseline thresholds; tune based on real traffic.
 5. DB connectivity issues:
 - Trigger on repeated worker fatal events (`coursenotif_worker_process_fatal_total` increasing) with DB connection errors in structured logs.
 - Trigger on elevated API 5xx metrics (`coursenotif_api_http_server_errors_total`).
+
+Recommended watchdog envs:
+
+```bash
+WORKER_HEALTH_ALERT_CONSECUTIVE_FAILURES=2
+WORKER_SESSION_EXPIRED_ALERT_THRESHOLD=3
+WORKER_SESSION_EXPIRED_ALERT_WINDOW_SECONDS=900
+WORKER_ALERT_COOLDOWN_SECONDS=1800
+WORKER_HEALTH_RESTART_CONSECUTIVE_FAILURES=3
+WORKER_RESTART_COOLDOWN_SECONDS=900
+MONITOR_SUPERVISOR_CRASH_LOOP_MAX_RESTARTS=5
+MONITOR_SUPERVISOR_WATCHDOG_INTERVAL_SECONDS=60
+WORKER_WATCHDOG_INTERVAL_SECONDS=60
+```
 
 ## Incident playbooks
 
@@ -102,6 +126,11 @@ tail -n 200 /tmp/coursenotif_monitor_supervisor.out.log
 bash scripts/stop-monitor-supervisor.sh
 bash scripts/start-monitor-supervisor.sh
 ```
+4. If using the watchdog, inspect current watchdog output:
+```bash
+tail -n 100 /tmp/coursenotif_monitor_watchdog.out.log
+tail -n 100 /tmp/coursenotif_monitor_watchdog.err.log
+```
 
 Verification:
 
@@ -129,6 +158,10 @@ npm run monitor:init-login:keep-open:local
 - `VSB_LOGIN_*`
 - `VSB_LOGGED_OUT_SELECTOR`
 - `VSB_URL`
+4. Check whether the watchdog has already sent/repeated an owner alert:
+```bash
+tail -n 100 /tmp/coursenotif_monitor_watchdog.out.log
+```
 
 Verification:
 
@@ -174,6 +207,10 @@ echo "$DATABASE_URL"
 /opt/homebrew/opt/postgresql@16/bin/psql "$DATABASE_URL" -c "SELECT NOW();"
 ```
 3. If DB recovered, restart API and worker.
+4. Re-run watchdog health check:
+```bash
+node scripts/check-worker-health.js --alert-on-failure --restart supervisor
+```
 
 Verification:
 

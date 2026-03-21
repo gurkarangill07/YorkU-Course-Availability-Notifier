@@ -1,10 +1,10 @@
 # CourseNotif Deployment Checklist
 
-Last updated: March 14, 2026
+Last updated: March 21, 2026
 
 ## Pre-deploy
 
-1. Confirm secret store entries exist and are current: DATABASE_URL, SMTP_PASS, SMTP_PASS_AUTH, OTP_PEPPER, VSB_LOGIN_USERNAME, VSB_LOGIN_PASSWORD, METRICS_BEARER_TOKEN (if used).
+1. Confirm secret store entries exist and are current: DATABASE_URL, SMTP_PASS, SMTP_PASS_AUTH, OTP_PEPPER, VSB_LOGIN_USERNAME, VSB_LOGIN_PASSWORD, METRICS_BEARER_TOKEN (if used), OWNER_ALERT_EMAIL (if alert emails are enabled).
 2. Confirm DB role is least-privilege and uses a dedicated credential.
 3. Confirm required envs for the target runtime. API should only receive DATABASE_URL, OTP_PEPPER, SMTP_PASS_AUTH, SMTP_HOST/PORT/SECURE, SMTP_USER, SMTP_FROM, APP_BASE_URL, optional METRICS_BEARER_TOKEN, and any intentional `AUTH_*RATE_LIMIT*` overrides. Worker should only receive DATABASE_URL, SMTP_PASS, SMTP_HOST/PORT/SECURE, SMTP_USER, SMTP_FROM, APP_BASE_URL, and VSB_* when browser mode is enabled.
 4. Run `npm run ci` for the release candidate.
@@ -14,12 +14,13 @@ Last updated: March 14, 2026
 ## Deploy
 
 1. Deploy API and worker with updated env.
-2. Run `npm run monitor:health` and check `/api/health` and `/api/worker-health`.
-3. If browser mode is enabled, run `npm run monitor:init-login` to refresh the shared session.
+2. Run `npm run monitor:health` and check `/api/health`, `/api/worker-health`, and `/api/worker-metrics`.
+3. Run one watchdog pass if this deploy uses background monitoring automation: `node scripts/check-worker-health.js --alert-on-failure --restart supervisor`.
+4. If browser mode is enabled, run `npm run monitor:init-login` to refresh the shared session.
 
 ## Post-deploy verification
 
-1. Confirm `/api/metrics` and `/api/worker-health` return ok (bearer token if configured).
+1. Confirm `/api/metrics`, `/api/worker-metrics`, and `/api/worker-health` return ok (bearer token if configured).
 2. Trigger a test OTP send and confirm delivery.
 3. Watch logs for SMTP failures and session-expiry loops.
 

@@ -9,7 +9,9 @@ const { metrics } = require("./metrics");
 const {
   readWorkerHealthSnapshot,
   checkWorkerHealthStatus,
-  resolveWorkerHealthPath
+  resolveWorkerHealthPath,
+  readWorkerMetricsSnapshot,
+  resolveWorkerMetricsPath
 } = require("./workerHealth");
 
 const SESSION_COOKIE_NAME = "coursenotif_session";
@@ -287,6 +289,7 @@ function createApiApp({
   const authSessionMaxAgeMs = authSessionDays * 24 * 60 * 60 * 1000;
   const metricsBearerToken = String(env.METRICS_BEARER_TOKEN || "").trim();
   const workerHealthPath = resolveWorkerHealthPath(env);
+  const workerMetricsPath = resolveWorkerMetricsPath(env);
   const workerHealthMaxStaleSeconds = parseIntWithFallback(
     env.WORKER_HEALTH_MAX_STALE_SECONDS,
     300
@@ -582,6 +585,31 @@ function createApiApp({
 
     res.set("Content-Type", "text/plain; version=0.0.4; charset=utf-8");
     return res.send(metrics.renderPrometheus());
+  });
+
+  app.get("/api/worker-metrics", async (req, res) => {
+    if (metricsBearerToken) {
+      const authorization = String(req.headers.authorization || "").trim();
+      const expected = `Bearer ${metricsBearerToken}`;
+      if (authorization !== expected) {
+        return res.status(401).json({ error: "Unauthorized." });
+      }
+    }
+
+    try {
+      const body = await readWorkerMetricsSnapshot({
+        metricsPath: workerMetricsPath
+      });
+      res.set("Content-Type", "text/plain; version=0.0.4; charset=utf-8");
+      return res.send(body);
+    } catch (error) {
+      return res.status(503).json({
+        ok: false,
+        reason: "worker_metrics_unreadable",
+        workerMetricsPath,
+        error: error && error.message ? error.message : String(error)
+      });
+    }
   });
 
   app.get("/api/worker-health", async (req, res) => {
