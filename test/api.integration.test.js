@@ -59,6 +59,20 @@ async function requestJson(baseUrl, path, { method = "GET", body, cookie } = {})
   };
 }
 
+async function clearApiRateLimitKeys(pool, keys) {
+  const uniqueKeys = [...new Set(keys.filter(Boolean))];
+  if (uniqueKeys.length === 0) {
+    return;
+  }
+  await pool.query(
+    `
+    DELETE FROM api_rate_limits
+    WHERE limiter_key = ANY($1::text[])
+    `,
+    [uniqueKeys]
+  );
+}
+
 test(
   "API integration: OTP auth + tracked course CRUD",
   { skip: !process.env.DATABASE_URL },
@@ -93,8 +107,14 @@ test(
     const numericSuffix = String(suffix).replace(/\D/g, "").slice(-5).padStart(5, "0");
     const cartId = `A${numericSuffix}`;
     const cleanupPool = new Pool({ connectionString: process.env.DATABASE_URL });
+    let userId = null;
 
     try {
+      await clearApiRateLimitKeys(cleanupPool, [
+        "ip:127.0.0.1",
+        `email:${email.toLowerCase()}`
+      ]);
+
       const health = await requestJson(baseUrl, "/api/health");
       assert.equal(health.status, 200);
       assert.deepEqual(health.json, { ok: true });
@@ -119,6 +139,7 @@ test(
       assert.equal(verifyOtp.status, 200);
       assert.equal(verifyOtp.json.ok, true);
       assert.ok(verifyOtp.cookieHeader.includes("coursenotif_session="));
+      userId = Number(verifyOtp.json.user.id);
 
       const sessionCookie = verifyOtp.cookieHeader;
 
@@ -269,6 +290,11 @@ test(
       assert.equal(logout.status, 200);
       assert.equal(logout.json.ok, true);
     } finally {
+      await clearApiRateLimitKeys(cleanupPool, [
+          `email:${email.toLowerCase()}`,
+          "ip:127.0.0.1",
+          Number.isFinite(userId) ? `user:${userId}` : null
+      ]);
       await cleanupPool.query(
         "DELETE FROM notification_attempts WHERE to_email = $1 OR cart_id = $2",
         [email.toLowerCase(), cartId]
@@ -332,6 +358,11 @@ test(
     const cleanupPool = new Pool({ connectionString: process.env.DATABASE_URL });
 
     try {
+      await clearApiRateLimitKeys(cleanupPool, [
+        "ip:127.0.0.1",
+        `email:${email}`
+      ]);
+
       await db.invalidateActiveOtpChallengesByEmail(email);
       await db.createOtpChallenge({
         email,
@@ -357,9 +388,7 @@ test(
       assert.equal(third.status, 429);
       assert.match(String(third.json.error || ""), /too many otp verification attempts/i);
     } finally {
-      await cleanupPool.query("DELETE FROM api_rate_limits WHERE limiter_key = $1", [
-        `email:${email}`
-      ]);
+      await clearApiRateLimitKeys(cleanupPool, [`email:${email}`, "ip:127.0.0.1"]);
       await cleanupPool.query("DELETE FROM auth_otp_challenges WHERE email = $1", [
         email
       ]);
