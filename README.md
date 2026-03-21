@@ -47,7 +47,7 @@ CourseNotif monitors tracked courses and notifies users when seats open (`os > 0
   - emergency monitoring kill switch (`MONITOR_EMERGENCY_DISABLE`)
   - policy assumptions documented in `docs/POLICY.md`
 - Secret management policy, rotation process, and deployment checklist are documented (`docs/SECRETS.md`, `docs/DEPLOYMENT.md`).
-- Automated tests exist for parser, monitor dispatch logic, auth hardening, and API auth/course flows (`test/*.test.js`).
+- Automated tests exist for parser, monitor dispatch logic, auth hardening, deterministic browser recovery paths, and API auth/course flows (`test/*.test.js`).
 - CI workflow runs on PRs and `main` pushes and fails on smoke/test regressions (`.github/workflows/ci.yml`).
 
 ## Key files
@@ -413,7 +413,7 @@ bash scripts/uninstall-monitor-launchd.sh
 
 - No dedicated UI/reporting page for notification delivery attempts yet.
 - OTP auth is implemented, but no external identity provider yet.
-- Test coverage is still limited and does not yet cover full browser automation paths.
+- Deterministic browser-path coverage now exists for init-login and session-recovery flows, but CI still does not exercise the live VSB site or selector drift.
 
 ## Runbooks
 

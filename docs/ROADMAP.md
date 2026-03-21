@@ -83,7 +83,7 @@ Delivered so far:
 Remaining:
 
 - Expand parser fixtures for more real-world `getClassData.jsp` variants.
-- Add monitor tests for session recovery branches and full scan loops.
+- Extend browser-path coverage beyond deterministic recovery tests into fuller scan-loop scenarios and selector-drift protection.
 - Add broader API integration coverage for negative/error cases and authorization edges.
 
 Exit criteria:
