@@ -1,6 +1,6 @@
 # CourseNotif Context (Current Snapshot)
 
-Last updated: March 14, 2026
+Last updated: March 21, 2026
 
 ## 1) Project identity
 
@@ -53,7 +53,7 @@ Last updated: March 14, 2026
 - Auth hardening now includes:
   - route-level rate limiting on OTP endpoints
   - authenticated write throttling on tracked-course mutation endpoints
-  - DB-backed shared rate limiting across API instances
+  - DB-backed shared rate limiting across API instances with isolated limiter buckets per route
 - Serves `index.html` at `GET /`
 
 3. Frontend
@@ -124,6 +124,7 @@ Last updated: March 14, 2026
 7. Ops scripts and local runners
 - `.env.local` loader: `scripts/with-env.sh`
 - Local npm runners:
+  - `npm run config:validate` (or `bash scripts/with-env.sh npm run config:validate -- --runtime <api|worker>`)
   - `npm run web:local`
   - `npm run monitor:init-login:local`
   - `npm run monitor:init-login:keep-open:local`
@@ -145,12 +146,13 @@ Last updated: March 14, 2026
 - Automated tests exist under `test/`:
   - parser unit tests (`test/jspParser.test.js`)
   - monitor dispatch/retry unit tests (`test/monitorService.test.js`)
+  - auth hardening tests (`test/authHardening.test.js`)
   - API auth + tracked-course integration test (`test/api.integration.test.js`)
   - observability tests (`test/observability.test.js`, `test/logger.test.js`)
   - policy controls tests (`test/policyControls.test.js`)
 - CI workflow exists at `.github/workflows/ci.yml`
 - CI runs smoke + tests on pull requests and pushes to `main`
-- Current `main` branch was green on local smoke/test checks before this auth-hardening pass
+- Current `main` branch was green on the latest local smoke/test checks in this snapshot
 
 9. Observability
 - Structured logging utility exists in `src/logger.js`
@@ -171,8 +173,9 @@ Last updated: March 14, 2026
 
 - `DATABASE_URL` is required
 - `PG_SSL_REJECT_UNAUTHORIZED=false` is supported for hosted Postgres setups that require relaxed TLS verification
-- `APP_BASE_URL` controls links used in email templates
+- `APP_BASE_URL` controls links used in email templates and is required for worker monitoring modes that can send notifications
 - `INVALID_CODE_MAX_ATTEMPTS` controls invalid-code threshold before marking a course invalid
+- Runtime preflight validation is available via `npm run config:validate`
 - Auth hardening envs are supported:
   - `AUTH_RATE_LIMIT_WINDOW_SECONDS`
   - `AUTH_SEND_OTP_MAX_PER_IP`
@@ -209,22 +212,28 @@ Last updated: March 14, 2026
 - If `psql` is not on PATH (macOS/Homebrew), use:
   - `/opt/homebrew/opt/postgresql@16/bin/psql "$DATABASE_URL" -f db/schema.sql`
 
-4. Start API/UI
+4. Validate runtime config
+- API: `npm run config:validate -- --runtime api`
+- Worker loop/once: `npm run config:validate -- --runtime worker`
+- Worker init-login: `npm run config:validate -- --runtime worker --mode init_login`
+- If using `.env.local`, wrap with `bash scripts/with-env.sh`
+
+5. Start API/UI
 - `npm run web` (or `npm run web:local`)
 - Open `http://localhost:3000`
 
-5. Initialize browser session (browser mode)
+6. Initialize browser session (browser mode)
 - `npm run monitor:init-login` (or `npm run monitor:init-login:local`)
 - For manual verification/debug, prefer `npm run monitor:init-login:keep-open`
 - Local keep-open variant:
   - `npm run monitor:init-login:keep-open:local`
 
-6. Run monitor
+7. Run monitor
 - Single pass: `npm run monitor:once`
 - Continuous loop: `npm run monitor:loop`
 - Local variants: `monitor:once:local`, `monitor:loop:local`
 
-7. Optional background operation
+8. Optional background operation
 - Manual supervisor: `bash scripts/start-monitor-supervisor.sh`
 - Stop supervisor: `bash scripts/stop-monitor-supervisor.sh`
 - macOS launchd install/uninstall scripts are available for persistent worker runtime

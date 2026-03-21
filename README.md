@@ -47,7 +47,7 @@ CourseNotif monitors tracked courses and notifies users when seats open (`os > 0
   - emergency monitoring kill switch (`MONITOR_EMERGENCY_DISABLE`)
   - policy assumptions documented in `docs/POLICY.md`
 - Secret management policy, rotation process, and deployment checklist are documented (`docs/SECRETS.md`, `docs/DEPLOYMENT.md`).
-- Automated tests exist for parser, monitor dispatch logic, and API auth/course flows (`test/*.test.js`).
+- Automated tests exist for parser, monitor dispatch logic, auth hardening, and API auth/course flows (`test/*.test.js`).
 - CI workflow runs on PRs and `main` pushes and fails on smoke/test regressions (`.github/workflows/ci.yml`).
 
 ## Key files
@@ -103,7 +103,7 @@ Common runtime settings:
 
 ```bash
 export PORT="3000"
-export APP_BASE_URL="http://localhost:3000"      # used in notification email links
+export APP_BASE_URL="http://localhost:3000"      # used in notification email links; required for worker monitoring modes
 export MONITOR_INTERVAL_SECONDS="60"
 export MIN_POLL_INTERVAL_SECONDS="30"             # enforces minimum monitor cadence
 export MONITOR_EMERGENCY_DISABLE="false"          # true disables loop/once/immediate check modes
@@ -242,6 +242,32 @@ If `psql` is not on PATH (common on macOS/Homebrew), use:
 /opt/homebrew/opt/postgresql@16/bin/psql "$DATABASE_URL" -f db/schema.sql
 ```
 
+4. Validate runtime config before starting services
+
+API preflight:
+
+```bash
+npm run config:validate -- --runtime api
+```
+
+Worker preflight:
+
+```bash
+npm run config:validate -- --runtime worker
+```
+
+Worker init-login preflight:
+
+```bash
+npm run config:validate -- --runtime worker --mode init_login
+```
+
+If you keep env vars in `.env.local`, wrap the same command with `scripts/with-env.sh`, for example:
+
+```bash
+bash scripts/with-env.sh npm run config:validate -- --runtime worker
+```
+
 ## Secrets and deployment hygiene
 
 Secrets are not stored in the repo. Use a secret manager and inject env at runtime. The full policy, rotation process, and least-privilege guidance live in `docs/SECRETS.md`. The deployment checklist and preflight steps are in `docs/DEPLOYMENT.md`. If API and worker are deployed separately, provide each process only the env it requires and use distinct SMTP credentials for OTP auth (`SMTP_PASS_AUTH`) vs course notifications (`SMTP_PASS`).
@@ -301,6 +327,14 @@ npm run db:schema:apply
 npm test
 ```
 
+Run config validation explicitly:
+
+```bash
+npm run config:validate -- --runtime api
+npm run config:validate -- --runtime worker
+npm run config:validate -- --runtime worker --mode init_login
+```
+
 Run local CI-equivalent gate:
 
 ```bash
@@ -326,6 +360,9 @@ curl -sS -H "Authorization: Bearer $METRICS_BEARER_TOKEN" http://localhost:3000/
 Use wrapper scripts if you keep env vars in `.env.local`:
 
 ```bash
+bash scripts/with-env.sh npm run config:validate -- --runtime api
+bash scripts/with-env.sh npm run config:validate -- --runtime worker
+bash scripts/with-env.sh npm run config:validate -- --runtime worker --mode init_login
 npm run web:local
 npm run monitor:init-login:local
 npm run monitor:init-login:keep-open:local
