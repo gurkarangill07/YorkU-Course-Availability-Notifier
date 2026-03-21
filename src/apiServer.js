@@ -261,33 +261,6 @@ function mapTrackedCourseRow(row) {
   };
 }
 
-function mapAuthSessionRow(row, currentSessionId) {
-  const expiresAtMs = new Date(row.expires_at).getTime();
-  const current = Number(row.id) === Number(currentSessionId);
-  const expired = Number.isFinite(expiresAtMs) && expiresAtMs <= Date.now();
-  let status = "active";
-  if (current) {
-    status = "current";
-  } else if (row.revoked_at) {
-    status = "revoked";
-  } else if (expired) {
-    status = "expired";
-  }
-
-  return {
-    id: Number(row.id),
-    current,
-    expired,
-    status,
-    createdAt: row.created_at,
-    lastSeenAt: row.last_seen_at || row.created_at,
-    expiresAt: row.expires_at,
-    revokedAt: row.revoked_at || null,
-    lastIp: row.last_ip || null,
-    userAgent: row.user_agent || null
-  };
-}
-
 function createApiApp({
   db,
   notifierModule = defaultNotifier,
@@ -570,15 +543,7 @@ function createApiApp({
       return null;
     }
 
-    if (typeof db.touchAuthSessionActivity === "function") {
-      await db.touchAuthSessionActivity({
-        tokenHash,
-        lastIp: getRequestIp(req)
-      });
-    }
-
     return {
-      sessionId: session.id,
       tokenHash,
       userId: session.user_id,
       email: session.email
@@ -678,17 +643,6 @@ function createApiApp({
           id: auth.userId,
           email: auth.email
         }
-      });
-    } catch (error) {
-      return next(error);
-    }
-  });
-
-  app.get("/api/auth/sessions", requireAuth, async (req, res, next) => {
-    try {
-      const items = await db.listAuthSessionsByUser(req.auth.userId);
-      return res.json({
-        items: items.map((row) => mapAuthSessionRow(row, req.auth.sessionId))
       });
     } catch (error) {
       return next(error);
@@ -807,9 +761,7 @@ function createApiApp({
       await db.createAuthSession({
         userId: user.id,
         tokenHash: sessionTokenHash,
-        expiresAt: sessionExpiresAt,
-        lastIp: getRequestIp(req),
-        userAgent: String(req.headers["user-agent"] || "").trim() || null
+        expiresAt: sessionExpiresAt
       });
       setAuthSessionCookie(res, sessionToken);
 
@@ -824,54 +776,6 @@ function createApiApp({
       return next(error);
     }
   });
-
-  app.post(
-    "/api/auth/logout-others",
-    requireAuth,
-    authenticatedWriteRateLimit,
-    async (req, res, next) => {
-      try {
-        const revokedCount = await db.revokeOtherAuthSessionsForUser({
-          userId: req.auth.userId,
-          currentSessionId: req.auth.sessionId
-        });
-        return res.json({ ok: true, revokedCount });
-      } catch (error) {
-        return next(error);
-      }
-    }
-  );
-
-  app.post(
-    "/api/auth/sessions/:id/revoke",
-    requireAuth,
-    authenticatedWriteRateLimit,
-    async (req, res, next) => {
-      try {
-        const sessionId = Number.parseInt(req.params.id, 10);
-        if (!Number.isFinite(sessionId) || sessionId <= 0) {
-          return res.status(400).json({ error: "Valid session id is required." });
-        }
-        if (sessionId === Number(req.auth.sessionId)) {
-          return res.status(400).json({
-            error: "Use logout to sign out the current session."
-          });
-        }
-
-        const revoked = await db.revokeAuthSessionByIdForUser({
-          sessionId,
-          userId: req.auth.userId
-        });
-        if (!revoked) {
-          return res.status(404).json({ error: "Session not found." });
-        }
-
-        return res.json({ ok: true });
-      } catch (error) {
-        return next(error);
-      }
-    }
-  );
 
   app.post("/api/auth/logout", async (req, res, next) => {
     try {

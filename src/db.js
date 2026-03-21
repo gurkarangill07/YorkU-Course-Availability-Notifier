@@ -225,18 +225,8 @@ function createDb({ databaseUrl }) {
             token_hash TEXT NOT NULL UNIQUE,
             expires_at TIMESTAMPTZ NOT NULL,
             revoked_at TIMESTAMPTZ,
-            created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-            last_seen_at TIMESTAMPTZ,
-            last_ip TEXT,
-            user_agent TEXT
+            created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
           );
-
-          ALTER TABLE auth_sessions
-          ADD COLUMN IF NOT EXISTS last_seen_at TIMESTAMPTZ;
-          ALTER TABLE auth_sessions
-          ADD COLUMN IF NOT EXISTS last_ip TEXT;
-          ALTER TABLE auth_sessions
-          ADD COLUMN IF NOT EXISTS user_agent TEXT;
 
           CREATE TABLE IF NOT EXISTS api_rate_limits (
             limiter_key TEXT PRIMARY KEY,
@@ -529,13 +519,7 @@ function createDb({ databaseUrl }) {
     return rows[0] ? rows[0].failed_attempts : null;
   }
 
-  async function createAuthSession({
-    userId,
-    tokenHash,
-    expiresAt,
-    lastIp = null,
-    userAgent = null
-  }) {
+  async function createAuthSession({ userId, tokenHash, expiresAt }) {
     const { rows } = await pool.query(
       `
       INSERT INTO auth_sessions (
@@ -543,24 +527,18 @@ function createDb({ databaseUrl }) {
         token_hash,
         expires_at,
         revoked_at,
-        created_at,
-        last_seen_at,
-        last_ip,
-        user_agent
+        created_at
       )
-      VALUES ($1, $2, $3, NULL, NOW(), NOW(), $4, $5)
+      VALUES ($1, $2, $3, NULL, NOW())
       RETURNING
         id,
         user_id,
         token_hash,
         expires_at,
         revoked_at,
-        created_at,
-        last_seen_at,
-        last_ip,
-        user_agent
+        created_at
       `,
-      [userId, tokenHash, expiresAt, lastIp, userAgent]
+      [userId, tokenHash, expiresAt]
     );
     return rows[0];
   }
@@ -575,9 +553,6 @@ function createDb({ databaseUrl }) {
         s.expires_at,
         s.revoked_at,
         s.created_at,
-        s.last_seen_at,
-        s.last_ip,
-        s.user_agent,
         u.email
       FROM auth_sessions s
       INNER JOIN users u ON u.id = s.user_id
@@ -598,78 +573,6 @@ function createDb({ databaseUrl }) {
       `,
       [tokenHash]
     );
-  }
-
-  async function touchAuthSessionActivity({ tokenHash, lastIp = null }) {
-    await pool.query(
-      `
-      UPDATE auth_sessions
-      SET
-        last_seen_at = NOW(),
-        last_ip = COALESCE($2, last_ip)
-      WHERE
-        token_hash = $1
-        AND revoked_at IS NULL
-        AND (
-          last_seen_at IS NULL
-          OR last_seen_at < NOW() - INTERVAL '5 minutes'
-        )
-      `,
-      [tokenHash, lastIp]
-    );
-  }
-
-  async function listAuthSessionsByUser(userId) {
-    const { rows } = await pool.query(
-      `
-      SELECT
-        id,
-        user_id,
-        expires_at,
-        revoked_at,
-        created_at,
-        last_seen_at,
-        last_ip,
-        user_agent
-      FROM auth_sessions
-      WHERE user_id = $1
-      ORDER BY created_at DESC, id DESC
-      `,
-      [userId]
-    );
-    return rows;
-  }
-
-  async function revokeAuthSessionByIdForUser({ sessionId, userId }) {
-    const { rowCount } = await pool.query(
-      `
-      UPDATE auth_sessions
-      SET revoked_at = NOW()
-      WHERE
-        id = $1
-        AND user_id = $2
-        AND revoked_at IS NULL
-        AND expires_at > NOW()
-      `,
-      [sessionId, userId]
-    );
-    return rowCount;
-  }
-
-  async function revokeOtherAuthSessionsForUser({ userId, currentSessionId }) {
-    const { rowCount } = await pool.query(
-      `
-      UPDATE auth_sessions
-      SET revoked_at = NOW()
-      WHERE
-        user_id = $1
-        AND revoked_at IS NULL
-        AND expires_at > NOW()
-        AND id <> $2
-      `,
-      [userId, currentSessionId]
-    );
-    return rowCount;
   }
 
   async function consumeApiRateLimit({
@@ -1767,10 +1670,6 @@ function createDb({ databaseUrl }) {
     createAuthSession,
     getAuthSessionByTokenHash,
     revokeAuthSessionByTokenHash,
-    touchAuthSessionActivity,
-    listAuthSessionsByUser,
-    revokeAuthSessionByIdForUser,
-    revokeOtherAuthSessionsForUser,
     consumeApiRateLimit,
     getUserByEmail,
     getOrCreateUserByEmail,

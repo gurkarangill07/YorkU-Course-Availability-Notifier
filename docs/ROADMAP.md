@@ -58,8 +58,7 @@ Delivered so far:
 - Passwordless auth/session flow is implemented with:
   - OTP resend cooldowns and failed-attempt caps
   - route-level rate limiting on OTP and authenticated write endpoints
-  - session list/revoke UX for signed-in users
-  - per-session revocation and sign-out-other-sessions API endpoints
+  - DB-backed shared rate limiting across API instances
 
 Remaining:
 

@@ -40,11 +40,8 @@ Last updated: March 14, 2026
   - `GET /api/metrics` (optional bearer auth)
   - `GET /api/worker-health` (optional bearer auth)
   - `GET /api/auth/me`
-  - `GET /api/auth/sessions` (auth required)
   - `POST /api/auth/send-otp`
   - `POST /api/auth/verify-otp`
-  - `POST /api/auth/logout-others` (auth required)
-  - `POST /api/auth/sessions/:id/revoke` (auth required)
   - `POST /api/auth/logout`
   - `GET /api/tracked-courses` (auth required)
   - `POST /api/tracked-courses` (auth required)
@@ -55,9 +52,8 @@ Last updated: March 14, 2026
 - Tracked-course responses include status/detail fields (`trackingStatus`, `notifiedAt`, `invalidAttempts`, `invalidNotifiedAt`, `lastCheckedAt`, `lastObservedOs`, `requiresFreshScan`)
 - Auth hardening now includes:
   - route-level rate limiting on OTP endpoints
-  - authenticated write throttling on tracked-course and session-revocation endpoints
+  - authenticated write throttling on tracked-course mutation endpoints
   - DB-backed shared rate limiting across API instances
-  - session activity tracking + per-session revocation APIs
 - Serves `index.html` at `GET /`
 
 3. Frontend
@@ -66,8 +62,6 @@ Last updated: March 14, 2026
   - passwordless email OTP sign-in
   - resend OTP with cooldown
   - logout
-  - session list + revoke controls for non-current sessions
-  - sign out other sessions in one action
   - adding tracked courses
   - optional custom course name
   - listing tracked courses with tracking status text

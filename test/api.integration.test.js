@@ -107,7 +107,6 @@ test(
     const numericSuffix = String(suffix).replace(/\D/g, "").slice(-5).padStart(5, "0");
     const cartId = `A${numericSuffix}`;
     const cleanupPool = new Pool({ connectionString: process.env.DATABASE_URL });
-    let userId = null;
 
     try {
       await clearApiRateLimitKeys(cleanupPool, [
@@ -139,7 +138,6 @@ test(
       assert.equal(verifyOtp.status, 200);
       assert.equal(verifyOtp.json.ok, true);
       assert.ok(verifyOtp.cookieHeader.includes("coursenotif_session="));
-      userId = Number(verifyOtp.json.user.id);
 
       const sessionCookie = verifyOtp.cookieHeader;
 
@@ -149,65 +147,6 @@ test(
       assert.equal(me.status, 200);
       assert.equal(me.json.authenticated, true);
       assert.equal(me.json.user.email, email.toLowerCase());
-
-      const extraSessionOneToken = crypto.randomBytes(16).toString("hex");
-      const extraSessionTwoToken = crypto.randomBytes(16).toString("hex");
-      await db.createAuthSession({
-        userId: verifyOtp.json.user.id,
-        tokenHash: hashSha256(extraSessionOneToken),
-        expiresAt: new Date(Date.now() + 7 * 24 * 60 * 60 * 1000),
-        lastIp: "127.0.0.2",
-        userAgent: "Integration Test Browser"
-      });
-      await db.createAuthSession({
-        userId: verifyOtp.json.user.id,
-        tokenHash: hashSha256(extraSessionTwoToken),
-        expiresAt: new Date(Date.now() + 7 * 24 * 60 * 60 * 1000),
-        lastIp: "127.0.0.3",
-        userAgent: "Integration Test Browser"
-      });
-
-      const sessionList = await requestJson(baseUrl, "/api/auth/sessions", {
-        cookie: sessionCookie
-      });
-      assert.equal(sessionList.status, 200);
-      assert.equal(Array.isArray(sessionList.json.items), true);
-      assert.equal(sessionList.json.items.length, 3);
-      const currentSession = sessionList.json.items.find((item) => item.current);
-      assert.ok(currentSession);
-      assert.match(String(currentSession.lastIp || ""), /127\.0\.0\.1/);
-      const revokableSession = sessionList.json.items.find((item) => !item.current);
-      assert.ok(revokableSession);
-
-      const revokeSession = await requestJson(
-        baseUrl,
-        `/api/auth/sessions/${revokableSession.id}/revoke`,
-        {
-          method: "POST",
-          cookie: sessionCookie
-        }
-      );
-      assert.equal(revokeSession.status, 200);
-      assert.equal(revokeSession.json.ok, true);
-
-      const logoutOthers = await requestJson(baseUrl, "/api/auth/logout-others", {
-        method: "POST",
-        cookie: sessionCookie
-      });
-      assert.equal(logoutOthers.status, 200);
-      assert.equal(logoutOthers.json.ok, true);
-      assert.equal(logoutOthers.json.revokedCount, 1);
-
-      const sessionListAfterRevocation = await requestJson(baseUrl, "/api/auth/sessions", {
-        cookie: sessionCookie
-      });
-      assert.equal(sessionListAfterRevocation.status, 200);
-      const remainingCurrent = sessionListAfterRevocation.json.items.find((item) => item.current);
-      assert.ok(remainingCurrent);
-      assert.equal(
-        sessionListAfterRevocation.json.items.filter((item) => !item.current && item.revokedAt).length,
-        2
-      );
 
       const createTrack = await requestJson(baseUrl, "/api/tracked-courses", {
         method: "POST",
@@ -292,8 +231,7 @@ test(
     } finally {
       await clearApiRateLimitKeys(cleanupPool, [
           `email:${email.toLowerCase()}`,
-          "ip:127.0.0.1",
-          Number.isFinite(userId) ? `user:${userId}` : null
+          "ip:127.0.0.1"
       ]);
       await cleanupPool.query(
         "DELETE FROM notification_attempts WHERE to_email = $1 OR cart_id = $2",

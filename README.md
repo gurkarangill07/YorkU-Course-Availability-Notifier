@@ -9,7 +9,6 @@ CourseNotif monitors tracked courses and notifies users when seats open (`os > 0
   - passwordless sign-in via email OTP
   - email input starts blank on unauthenticated page load (no localStorage prefill)
   - authenticated session view shows the signed-in email in the input
-  - session list + revoke controls for other browser sessions
   - adding/listing/removing tracked courses
   - pause/resume tracking controls
   - per-course tracking status labels
@@ -19,7 +18,6 @@ CourseNotif monitors tracked courses and notifies users when seats open (`os > 0
   - OTP resend cooldowns and max failed-attempt caps
   - route-level rate limits for OTP and authenticated write endpoints
   - shared DB-backed rate limiting across API instances
-  - session revocation endpoints (`/api/auth/sessions`, `/api/auth/logout-others`)
 - Monitoring worker (`src/worker.js`) with modes:
   - `--init-login`
   - `--init-login --keep-open`
@@ -365,11 +363,8 @@ bash scripts/uninstall-monitor-launchd.sh
 - `GET /api/metrics` (optional bearer auth via `METRICS_BEARER_TOKEN`)
 - `GET /api/worker-health` (optional bearer auth via `METRICS_BEARER_TOKEN`)
 - `GET /api/auth/me`
-- `GET /api/auth/sessions` (auth required)
 - `POST /api/auth/send-otp`
 - `POST /api/auth/verify-otp`
-- `POST /api/auth/logout-others` (auth required)
-- `POST /api/auth/sessions/:id/revoke` (auth required)
 - `POST /api/auth/logout`
 - `GET /api/tracked-courses` (auth required)
 - `POST /api/tracked-courses` (auth required)
