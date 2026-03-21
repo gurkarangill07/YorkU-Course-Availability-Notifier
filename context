@@ -1,6 +1,6 @@
 # CourseNotif Context (Current Snapshot)
 
-Last updated: March 21, 2026 (ops hardening update)
+Last updated: March 21, 2026 (auth recovery UX update)
 
 ## 1) Project identity
 
@@ -62,6 +62,7 @@ Last updated: March 21, 2026 (ops hardening update)
 - Supports:
   - passwordless email OTP sign-in
   - resend OTP with cooldown
+  - inline auth/session recovery messaging for OTP errors, signed-out actions, and expired sessions
   - logout
   - adding tracked courses
   - optional custom course name
@@ -70,7 +71,7 @@ Last updated: March 21, 2026 (ops hardening update)
   - stop tracking
   - resume tracking (`Track Again`) for `paused`/`notified`/`invalid` states
   - automatic tracked-course refresh while signed in
-- Session-invalid/revoked 401s now clear local UI auth state and prompt re-login
+- Session-invalid/revoked 401s now clear local UI auth state, preserve the email flow, and prompt re-login with inline recovery guidance
 - Course code input is normalized on the client (uppercase alphanumeric, max 6 chars) with inline validation guidance
 - Auto-logout-on-tab-close hook exists but is disabled by default (`AUTO_LOGOUT_ON_TAB_CLOSE=false`)
 

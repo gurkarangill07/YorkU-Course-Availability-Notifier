@@ -124,10 +124,10 @@ Delivered so far:
 - Per-course tracking status is shown in UI.
 - Pause/resume controls are implemented for tracked courses.
 - Cart ID validation is stricter (`A-Z0-9`, exactly 6 chars) with improved UI feedback.
+- Session/auth recovery guidance is now shown inline in the UI instead of relying on generic browser alerts for common sign-in, OTP, and session-expiry cases.
 
 Remaining:
-
-- Add clearer session/auth-specific UI recovery guidance (current UX still uses generic alerts for most failures).
+- Improve notification-attempt visibility and user-facing delivery troubleshooting.
 
 Exit criteria:
 - Users can manage common tracking and recovery tasks from UI without manual support.

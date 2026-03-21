@@ -9,6 +9,8 @@
         :root {
             --primary-color: #2563eb;
             --danger-color: #dc2626;
+            --success-color: #059669;
+            --warning-color: #d97706;
             --bg-color: #f3f4f6;
             --card-bg: #ffffff;
             --text-color: #1f2937;
@@ -154,6 +156,44 @@
             display: none;
         }
 
+        .feedback {
+            border-radius: 6px;
+            border: 1px solid var(--border-color);
+            padding: 10px 12px;
+            margin: 12px 0 0;
+            font-size: 0.92rem;
+            line-height: 1.4;
+        }
+
+        .feedback-info {
+            background-color: #eff6ff;
+            border-color: #bfdbfe;
+            color: #1d4ed8;
+        }
+
+        .feedback-success {
+            background-color: #ecfdf5;
+            border-color: #a7f3d0;
+            color: #047857;
+        }
+
+        .feedback-warning {
+            background-color: #fff7ed;
+            border-color: #fdba74;
+            color: #c2410c;
+        }
+
+        .feedback-error {
+            background-color: #fef2f2;
+            border-color: #fca5a5;
+            color: #b91c1c;
+        }
+
+        .input-error {
+            border-color: #f87171;
+            box-shadow: 0 0 0 3px rgba(248, 113, 113, 0.15);
+        }
+
         .secondary-btn {
             background-color: #4b5563;
             margin-top: 8px;
@@ -202,6 +242,7 @@
 
             <button id="logoutBtn" class="secondary-btn hidden" onclick="logout()">Logout</button>
             <p id="authStatus" class="muted">Not signed in.</p>
+            <p id="authMessage" class="feedback feedback-info hidden" role="status" aria-live="polite"></p>
         </div>
 
         <!-- Section 2: Add Course -->
@@ -210,6 +251,8 @@
             <input type="text" id="courseCode" placeholder="enter the rem enrollment code of your course" maxlength="6" pattern="[A-Z0-9]{6}" autocomplete="off" autocapitalize="characters">
             <input type="text" id="courseName" placeholder="optional course name (e.g., EECS 1012)">
             <button id="trackBtn" onclick="startTracking()">Start Tracking</button>
+            <p id="trackHint" class="muted">Sign in first to add, pause, resume, or remove tracked courses.</p>
+            <p id="trackMessage" class="feedback feedback-info hidden" role="status" aria-live="polite"></p>
         </div>
 
         <!-- Section 3: Tracked Courses List -->
@@ -228,6 +271,8 @@
         let otpCooldownIntervalId = null;
         let trackedCoursesRefreshIntervalId = null;
         let trackedCoursesRefreshInFlight = false;
+        let authEmailDraft = '';
+        let otpSectionRequested = false;
         const TRACKED_COURSES_REFRESH_MS = 10000;
         const AUTO_LOGOUT_ON_TAB_CLOSE = false;
 
@@ -266,13 +311,42 @@
             return data;
         }
 
+        function setInlineMessage(elementId, message, tone = 'info') {
+            const element = document.getElementById(elementId);
+            if (!element) {
+                return;
+            }
+
+            const normalizedTone = ['info', 'success', 'warning', 'error'].includes(tone)
+                ? tone
+                : 'info';
+
+            if (!message) {
+                element.textContent = '';
+                element.className = 'feedback feedback-info hidden';
+                return;
+            }
+
+            element.textContent = message;
+            element.className = `feedback feedback-${normalizedTone}`;
+        }
+
+        function setAuthMessage(message, tone = 'info') {
+            setInlineMessage('authMessage', message, tone);
+        }
+
+        function setTrackMessage(message, tone = 'info') {
+            setInlineMessage('trackMessage', message, tone);
+        }
+
         function setAuthStatus(message) {
             document.getElementById('authStatus').textContent = message;
         }
 
         function setOtpSectionVisible(visible) {
+            otpSectionRequested = Boolean(visible);
             const otpSection = document.getElementById('otpSection');
-            otpSection.classList.toggle('hidden', !visible);
+            otpSection.classList.toggle('hidden', !otpSectionRequested);
         }
 
         function setCourseActionsEnabled(enabled) {
@@ -281,12 +355,140 @@
             document.getElementById('trackBtn').disabled = !enabled;
         }
 
+        function setTrackingHint(message) {
+            document.getElementById('trackHint').textContent = message;
+        }
+
+        function setInputError(element, hasError) {
+            if (!element) {
+                return;
+            }
+            element.classList.toggle('input-error', Boolean(hasError));
+        }
+
+        function focusEmailInput() {
+            const emailInput = document.getElementById('email');
+            emailInput.focus();
+            emailInput.select();
+        }
+
+        function focusOtpInput() {
+            const otpInput = document.getElementById('otpCode');
+            otpInput.focus();
+            otpInput.select();
+        }
+
+        function formatSeconds(seconds) {
+            const value = Number(seconds);
+            if (!Number.isFinite(value) || value <= 0) {
+                return 'a moment';
+            }
+            if (value < 60) {
+                return `${Math.ceil(value)}s`;
+            }
+            const minutes = Math.ceil(value / 60);
+            return `${minutes} minute${minutes === 1 ? '' : 's'}`;
+        }
+
+        function rememberEmailDraft(value) {
+            authEmailDraft = String(value || '').trim().toLowerCase();
+        }
+
+        function describeSendOtpError(error) {
+            const retryAfterSeconds = Number(error && error.data && error.data.retryAfterSeconds);
+            if (Number.isFinite(retryAfterSeconds) && retryAfterSeconds > 0) {
+                return {
+                    tone: 'warning',
+                    message: `A code was already sent recently. Wait ${formatSeconds(retryAfterSeconds)} before requesting another one, or use the code already in your inbox.`
+                };
+            }
+
+            if (error && error.status === 400) {
+                return {
+                    tone: 'error',
+                    message: 'Enter a valid email address to receive a login code.'
+                };
+            }
+
+            return {
+                tone: 'error',
+                message: error && error.message
+                    ? error.message
+                    : 'We could not send the OTP right now. Please try again.'
+            };
+        }
+
+        function describeVerifyOtpError(error) {
+            const retryAfterSeconds = Number(error && error.data && error.data.retryAfterSeconds);
+            const attemptsRemaining = Number(error && error.data && error.data.attemptsRemaining);
+            if (Number.isFinite(retryAfterSeconds) && retryAfterSeconds > 0) {
+                return {
+                    tone: 'warning',
+                    message: `Too many verification attempts. Wait ${formatSeconds(retryAfterSeconds)} before trying again, then request a new code if needed.`
+                };
+            }
+
+            if (Number.isFinite(attemptsRemaining)) {
+                if (attemptsRemaining > 0) {
+                    return {
+                        tone: 'error',
+                        message: `That code did not match. ${attemptsRemaining} attempt${attemptsRemaining === 1 ? '' : 's'} remaining before you need to request a new OTP.`
+                    };
+                }
+                return {
+                    tone: 'warning',
+                    message: 'That code is no longer usable. Request a new OTP and try again.'
+                };
+            }
+
+            if (error && error.status === 400) {
+                return {
+                    tone: 'error',
+                    message: 'That OTP is invalid or expired. Request a new code and try again.'
+                };
+            }
+
+            return {
+                tone: 'error',
+                message: error && error.message
+                    ? error.message
+                    : 'We could not verify that code right now. Please try again.'
+            };
+        }
+
+        function describeTrackingError(error) {
+            const message = String(error && error.message ? error.message : '').toLowerCase();
+            if (message.includes('cartid must be exactly 6 characters')) {
+                return 'Course code must be exactly 6 characters using only A-Z and 0-9.';
+            }
+            if (message.includes('cartid is required')) {
+                return 'Enter a 6-character REM code before starting tracking.';
+            }
+            if (error && error.message) {
+                return error.message;
+            }
+            return 'We could not update your tracked courses right now. Please try again.';
+        }
+
+        function wasSessionRecoveryHandled(error) {
+            return Boolean(error && error.status === 401);
+        }
+
         function handleSessionInvalidation(message) {
+            const emailInput = document.getElementById('email');
+            rememberEmailDraft(emailInput.value || (authUser && authUser.email) || authEmailDraft);
             authUser = null;
             trackedCourses = [];
+            document.getElementById('otpCode').value = '';
+            setOtpSectionVisible(false);
             renderList();
             updateAuthUi();
-            setAuthStatus(message || 'Session expired or was revoked. Sign in again.');
+            setAuthMessage(
+                message || 'Your session expired or was signed out elsewhere. Request a new OTP to continue.',
+                'warning'
+            );
+            setTrackMessage('You were signed out. Sign in again before changing tracked courses.', 'warning');
+            focusEmailInput();
         }
 
         function normalizeCourseCodeInput(value) {
@@ -306,7 +508,8 @@
 
             if (normalized.length < 6) {
                 if (showErrors) {
-                    alert('Course code must be exactly 6 characters (A-Z and 0-9).');
+                    setTrackMessage('Course code must be exactly 6 characters using only A-Z and 0-9.', 'error');
+                    setInputError(courseInput, true);
                 }
                 return null;
             }
@@ -321,6 +524,7 @@
             const resendOtpBtn = document.getElementById('resendOtpBtn');
 
             if (authUser) {
+                rememberEmailDraft(authUser.email);
                 emailInput.value = authUser.email;
                 emailInput.readOnly = true;
                 sendOtpBtn.classList.add('hidden');
@@ -328,9 +532,10 @@
                 logoutBtn.classList.remove('hidden');
                 setCourseActionsEnabled(true);
                 setAuthStatus(`Logged in as ${authUser.email}`);
+                setTrackingHint('Add a 6-character REM code to start tracking, or manage your current courses below.');
                 startTrackedCoursesAutoRefresh();
             } else {
-                emailInput.value = '';
+                emailInput.value = authEmailDraft;
                 emailInput.readOnly = false;
                 sendOtpBtn.classList.remove('hidden');
                 logoutBtn.classList.add('hidden');
@@ -339,10 +544,9 @@
                     resendOtpBtn.disabled = false;
                     resendOtpBtn.textContent = 'Resend OTP';
                 }
-                if (!emailInput.value.trim()) {
-                    setOtpSectionVisible(false);
-                }
+                document.getElementById('otpSection').classList.toggle('hidden', !otpSectionRequested);
                 setAuthStatus('Not signed in.');
+                setTrackingHint('Sign in first to add, pause, resume, or remove tracked courses.');
                 stopTrackedCoursesAutoRefresh();
             }
         }
@@ -420,13 +624,17 @@
         async function sendOtp() {
             const emailInput = document.getElementById('email');
             const email = emailInput.value.trim().toLowerCase();
+            setInputError(emailInput, false);
+            setAuthMessage('');
 
             if (!email || !email.includes('@') || !email.includes('.')) {
-                alert("Please enter a valid email address.");
-                emailInput.focus();
+                setInputError(emailInput, true);
+                setAuthMessage('Enter a valid email address so we know where to send your OTP.', 'error');
+                focusEmailInput();
                 return;
             }
 
+            rememberEmailDraft(email);
             try {
                 const result = await apiRequest('/api/auth/send-otp', {
                     method: 'POST',
@@ -434,14 +642,22 @@
                 });
                 setOtpSectionVisible(true);
                 startOtpCooldown(result && result.resendAfterSeconds);
-                setAuthStatus(`OTP sent to ${email}. Enter the code to sign in.`);
-                document.getElementById('otpCode').focus();
+                setAuthStatus(`OTP sent to ${email}.`);
+                setAuthMessage('Check your inbox for the 6-digit code, then enter it below to finish signing in.', 'success');
+                focusOtpInput();
             } catch (error) {
                 if (error.data && Number.isFinite(Number(error.data.retryAfterSeconds))) {
                     setOtpSectionVisible(true);
                     startOtpCooldown(Number(error.data.retryAfterSeconds));
                 }
-                alert(error.message);
+                const uiError = describeSendOtpError(error);
+                setAuthMessage(uiError.message, uiError.tone);
+                if (uiError.tone === 'error') {
+                    setInputError(emailInput, true);
+                    focusEmailInput();
+                } else {
+                    focusOtpInput();
+                }
             }
         }
 
@@ -450,32 +666,58 @@
             const otpInput = document.getElementById('otpCode');
             const email = emailInput.value.trim().toLowerCase();
             const otp = otpInput.value.trim().replace(/\s+/g, '');
+            setInputError(emailInput, false);
+            setInputError(otpInput, false);
+            setAuthMessage('');
 
             if (!email || !email.includes('@') || !email.includes('.')) {
-                alert('Please enter a valid email address.');
-                emailInput.focus();
+                setInputError(emailInput, true);
+                setAuthMessage('Enter a valid email address before verifying the OTP.', 'error');
+                focusEmailInput();
                 return;
             }
             if (!/^\d{6}$/.test(otp)) {
-                alert('Please enter a valid 6-digit OTP code.');
-                otpInput.focus();
+                setInputError(otpInput, true);
+                setAuthMessage('Enter the full 6-digit OTP from your email.', 'error');
+                focusOtpInput();
                 return;
             }
 
+            rememberEmailDraft(email);
             try {
-                await apiRequest('/api/auth/verify-otp', {
+                const result = await apiRequest('/api/auth/verify-otp', {
                     method: 'POST',
                     body: JSON.stringify({ email, otp })
                 });
                 otpInput.value = '';
-                await loadAuthSession();
-                await loadTrackedCourses();
+                authUser = result && result.user ? result.user : { email };
+                updateAuthUi();
             } catch (error) {
-                alert(error.message);
+                const uiError = describeVerifyOtpError(error);
+                setAuthMessage(uiError.message, uiError.tone);
+                setInputError(otpInput, true);
+                setOtpSectionVisible(true);
+                focusOtpInput();
+                return;
+            }
+
+            try {
+                await loadTrackedCourses();
+                setAuthMessage('Signed in successfully. You can now manage your tracked courses.', 'success');
+                setTrackMessage('You are signed in. Add a REM code to start tracking a course.', 'info');
+                document.getElementById('courseCode').focus();
+            } catch (error) {
+                if (wasSessionRecoveryHandled(error)) {
+                    return;
+                }
+                console.error(error);
+                setAuthMessage('Signed in, but we could not load your tracked courses yet. Refresh or try again.', 'warning');
+                setTrackMessage('Your session is active, but the tracked-course list could not be loaded right now.', 'warning');
             }
         }
 
         async function logout() {
+            rememberEmailDraft(document.getElementById('email').value || authEmailDraft);
             try {
                 await apiRequest('/api/auth/logout', { method: 'POST' });
             } catch (_) {
@@ -483,9 +725,13 @@
             }
             authUser = null;
             trackedCourses = [];
+            document.getElementById('otpCode').value = '';
+            setOtpSectionVisible(false);
             renderList();
             updateAuthUi();
-            setAuthStatus('Signed out.');
+            setAuthMessage('Signed out. Request a new OTP whenever you want to manage tracked courses again.', 'info');
+            setTrackMessage('You are signed out, so tracking changes are disabled until you sign back in.', 'info');
+            focusEmailInput();
         }
 
         async function startTracking() {
@@ -493,10 +739,12 @@
             const courseNameInput = document.getElementById('courseName');
             const code = validateCourseCodeInput({ showErrors: true });
             const customCourseName = courseNameInput.value.trim();
+            setInputError(courseInput, false);
 
             if (!authUser) {
-                alert('Please sign in with OTP first.');
-                document.getElementById('email').focus();
+                setAuthMessage('Sign in with your email first, then you can start tracking courses.', 'warning');
+                setTrackMessage('You need to sign in before starting tracking.', 'warning');
+                focusEmailInput();
                 return;
             }
             if (!code) {
@@ -518,20 +766,30 @@
                     body: JSON.stringify(payload)
                 });
                 if (!result.created && result.resumed) {
-                    alert("Tracking resumed for this course.");
+                    setTrackMessage(`Tracking resumed for ${code}.`, 'success');
                 } else if (!result.created) {
-                    alert("You are already tracking this course.");
+                    setTrackMessage(`You are already tracking ${code}.`, 'info');
+                } else {
+                    setTrackMessage(`Started tracking ${code}.`, 'success');
                 }
                 courseInput.value = '';
                 courseNameInput.value = '';
+                setInputError(courseInput, false);
                 await loadTrackedCourses();
             } catch (error) {
-                alert(error.message);
+                if (wasSessionRecoveryHandled(error)) {
+                    return;
+                }
+                setTrackMessage(describeTrackingError(error), 'error');
+                setInputError(courseInput, true);
+                courseInput.focus();
             }
         }
 
         async function stopTracking(id) {
             if (!authUser) {
+                setAuthMessage('Sign in again to manage tracked courses.', 'warning');
+                setTrackMessage('You are signed out, so this course could not be removed.', 'warning');
                 return;
             }
 
@@ -540,13 +798,19 @@
                     method: 'DELETE'
                 });
                 await loadTrackedCourses();
+                setTrackMessage('Course removed from tracking.', 'success');
             } catch (error) {
-                alert(error.message);
+                if (wasSessionRecoveryHandled(error)) {
+                    return;
+                }
+                setTrackMessage(describeTrackingError(error), 'error');
             }
         }
 
         async function resumeTracking(id) {
             if (!authUser) {
+                setAuthMessage('Sign in again to manage tracked courses.', 'warning');
+                setTrackMessage('You are signed out, so this course could not be resumed.', 'warning');
                 return;
             }
 
@@ -555,13 +819,19 @@
                     method: 'POST'
                 });
                 await loadTrackedCourses();
+                setTrackMessage('Tracking resumed for that course.', 'success');
             } catch (error) {
-                alert(error.message);
+                if (wasSessionRecoveryHandled(error)) {
+                    return;
+                }
+                setTrackMessage(describeTrackingError(error), 'error');
             }
         }
 
         async function pauseTracking(id) {
             if (!authUser) {
+                setAuthMessage('Sign in again to manage tracked courses.', 'warning');
+                setTrackMessage('You are signed out, so this course could not be paused.', 'warning');
                 return;
             }
 
@@ -570,8 +840,12 @@
                     method: 'POST'
                 });
                 await loadTrackedCourses();
+                setTrackMessage('Tracking paused for that course.', 'success');
             } catch (error) {
-                alert(error.message);
+                if (wasSessionRecoveryHandled(error)) {
+                    return;
+                }
+                setTrackMessage(describeTrackingError(error), 'error');
             }
         }
 
@@ -637,13 +911,24 @@
                 trackedCourses = [];
                 renderList();
                 updateAuthUi();
+                setAuthMessage('We could not restore your session automatically. Sign in to continue.', 'warning');
             }
 
             renderList();
         }
 
+        document.getElementById('email').addEventListener('input', (event) => {
+            rememberEmailDraft(event.target.value);
+            setInputError(event.target, false);
+        });
+
+        document.getElementById('otpCode').addEventListener('input', (event) => {
+            setInputError(event.target, false);
+        });
+
         const courseCodeInput = document.getElementById('courseCode');
         courseCodeInput.addEventListener('input', () => {
+            setInputError(courseCodeInput, false);
             validateCourseCodeInput({ showErrors: false });
         });
 

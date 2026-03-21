@@ -9,6 +9,7 @@ CourseNotif monitors tracked courses and notifies users when seats open (`os > 0
   - passwordless sign-in via email OTP
   - email input starts blank on unauthenticated page load (no localStorage prefill)
   - authenticated session view shows the signed-in email in the input
+  - inline auth/session recovery guidance instead of generic browser alerts for most sign-in and session-expiry flows
   - adding/listing/removing tracked courses
   - pause/resume tracking controls
   - per-course tracking status labels
