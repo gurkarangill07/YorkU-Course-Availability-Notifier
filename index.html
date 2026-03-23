@@ -138,6 +138,118 @@
             white-space: nowrap;
         }
 
+        .notification-item {
+            padding: 12px 0;
+            border-bottom: 1px solid var(--border-color);
+            display: flex;
+            flex-direction: column;
+            gap: 8px;
+        }
+
+        .notification-item:last-child {
+            border-bottom: none;
+        }
+
+        .notification-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: flex-start;
+            gap: 12px;
+        }
+
+        .notification-meta,
+        .notification-detail {
+            font-size: 0.85rem;
+            line-height: 1.4;
+            color: #4b5563;
+        }
+
+        .notification-detail {
+            color: #6b7280;
+        }
+
+        .notification-detail-error {
+            color: #b91c1c;
+        }
+
+        .status-badge {
+            display: inline-flex;
+            align-items: center;
+            justify-content: center;
+            border-radius: 999px;
+            padding: 4px 10px;
+            font-size: 0.78rem;
+            font-weight: 600;
+            white-space: nowrap;
+            flex-shrink: 0;
+        }
+
+        .status-success {
+            background-color: #ecfdf5;
+            color: #047857;
+        }
+
+        .status-warning {
+            background-color: #fff7ed;
+            color: #c2410c;
+        }
+
+        .status-error {
+            background-color: #fef2f2;
+            color: #b91c1c;
+        }
+
+        .status-info {
+            background-color: #eff6ff;
+            color: #1d4ed8;
+        }
+
+        .collapsible-card {
+            padding: 0;
+        }
+
+        .collapsible-card summary {
+            list-style: none;
+            cursor: pointer;
+            padding: 20px;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            gap: 12px;
+        }
+
+        .collapsible-card summary::-webkit-details-marker {
+            display: none;
+        }
+
+        .collapsible-card summary::after {
+            content: 'Show';
+            font-size: 0.85rem;
+            font-weight: 500;
+            color: #6b7280;
+            flex-shrink: 0;
+        }
+
+        .collapsible-card[open] summary::after {
+            content: 'Hide';
+        }
+
+        .collapsible-content {
+            padding: 0 20px 20px;
+            border-top: 1px solid var(--border-color);
+        }
+
+        .summary-title {
+            font-weight: 600;
+            font-size: 0.95rem;
+        }
+
+        .summary-note {
+            margin: 0;
+            color: #6b7280;
+            font-size: 0.85rem;
+        }
+
         .empty-state {
             text-align: center;
             color: #9ca3af;
@@ -212,6 +324,16 @@
                 gap: 10px;
             }
 
+            .notification-header {
+                flex-direction: column;
+                align-items: flex-start;
+            }
+
+            .collapsible-card summary {
+                flex-direction: column;
+                align-items: flex-start;
+            }
+
             .item-actions {
                 width: 100%;
             }
@@ -262,11 +384,27 @@
                 <li class="empty-state">No tracked courses yet.</li>
             </ul>
         </div>
+
+        <!-- Section 4: Recent Notification Attempts -->
+        <details class="card collapsible-card" id="notificationAttemptsCard">
+            <summary>
+                <span class="summary-title">Recent Notification Attempts</span>
+                <span id="notificationSummaryStatus" class="summary-note">Optional</span>
+            </summary>
+            <div class="collapsible-content">
+                <p id="notificationHint" class="muted">Sign in to view recent notification delivery history.</p>
+                <ul id="notificationAttemptsList" class="course-list">
+                    <li class="empty-state">Sign in to view recent notification attempts.</li>
+                </ul>
+            </div>
+        </details>
     </div>
 
-    <script>
-        let trackedCourses = [];
-        let authUser = null;
+        <script>
+            let trackedCourses = [];
+            let notificationAttempts = [];
+            let notificationAttemptsLoadState = 'idle';
+            let authUser = null;
         let otpCooldownEndTs = 0;
         let otpCooldownIntervalId = null;
         let trackedCoursesRefreshIntervalId = null;
@@ -359,6 +497,14 @@
             document.getElementById('trackHint').textContent = message;
         }
 
+        function setNotificationHint(message) {
+            document.getElementById('notificationHint').textContent = message;
+        }
+
+        function setNotificationSummaryStatus(message) {
+            document.getElementById('notificationSummaryStatus').textContent = message;
+        }
+
         function setInputError(element, hasError) {
             if (!element) {
                 return;
@@ -392,6 +538,107 @@
 
         function rememberEmailDraft(value) {
             authEmailDraft = String(value || '').trim().toLowerCase();
+        }
+
+        function formatDateTime(value) {
+            if (!value) {
+                return 'unknown time';
+            }
+
+            const date = new Date(value);
+            if (Number.isNaN(date.getTime())) {
+                return 'unknown time';
+            }
+
+            return date.toLocaleString();
+        }
+
+        function getNotificationStatusTone(status) {
+            const normalized = String(status || '').toLowerCase();
+            if (normalized === 'sent') {
+                return 'success';
+            }
+            if (normalized === 'retrying') {
+                return 'warning';
+            }
+            if (normalized === 'failed') {
+                return 'error';
+            }
+            return 'info';
+        }
+
+        function getNotificationStatusLabel(status) {
+            const normalized = String(status || '').toLowerCase();
+            if (normalized === 'sent') {
+                return 'Sent';
+            }
+            if (normalized === 'retrying') {
+                return 'Retrying';
+            }
+            if (normalized === 'failed') {
+                return 'Failed';
+            }
+            if (normalized === 'suppressed') {
+                return 'Suppressed';
+            }
+            return 'Queued';
+        }
+
+        function describeNotificationAttemptMeta(attempt) {
+            const parts = [];
+            const status = String(attempt && attempt.status ? attempt.status : '').toLowerCase();
+            const attemptCount = Number(attempt && attempt.attemptCount);
+            const maxAttempts = Number(attempt && attempt.maxAttempts);
+
+            if (
+                Number.isFinite(attemptCount) &&
+                Number.isFinite(maxAttempts) &&
+                maxAttempts > 0 &&
+                attemptCount > 0
+            ) {
+                parts.push(`Attempt ${attemptCount} of ${maxAttempts}`);
+            } else if (status === 'pending') {
+                parts.push('Queued, not attempted yet');
+            } else if (status === 'suppressed') {
+                parts.push('Suppressed before sending');
+            }
+
+            if (attempt && attempt.sentAt) {
+                parts.push(`Sent ${formatDateTime(attempt.sentAt)}`);
+            } else if (attempt && attempt.nextRetryAt && String(attempt.status || '').toLowerCase() === 'retrying') {
+                parts.push(`Next retry ${formatDateTime(attempt.nextRetryAt)}`);
+            } else if (attempt && attempt.suppressedUntil) {
+                parts.push(`Suppressed until ${formatDateTime(attempt.suppressedUntil)}`);
+            } else if (attempt && attempt.lastAttemptedAt) {
+                parts.push(`Last tried ${formatDateTime(attempt.lastAttemptedAt)}`);
+            }
+
+            if (attempt && attempt.createdAt) {
+                parts.push(`Queued ${formatDateTime(attempt.createdAt)}`);
+            }
+
+            return parts.join(' • ');
+        }
+
+        function describeNotificationAttemptDetail(attempt) {
+            if (!attempt) {
+                return '';
+            }
+
+            const detailParts = [];
+            if (attempt.toEmail) {
+                detailParts.push(`To ${attempt.toEmail}`);
+            }
+            if (attempt.providerMessageId) {
+                detailParts.push(`Provider id ${attempt.providerMessageId}`);
+            }
+
+            const lastError = String(attempt.lastError || '').trim();
+            if (lastError) {
+                detailParts.push(lastError);
+            }
+
+            return detailParts.join(' • ');
         }
 
         function describeSendOtpError(error) {
@@ -479,9 +726,12 @@
             rememberEmailDraft(emailInput.value || (authUser && authUser.email) || authEmailDraft);
             authUser = null;
             trackedCourses = [];
+            notificationAttempts = [];
+            notificationAttemptsLoadState = 'idle';
             document.getElementById('otpCode').value = '';
             setOtpSectionVisible(false);
             renderList();
+            renderNotificationAttempts();
             updateAuthUi();
             setAuthMessage(
                 message || 'Your session expired or was signed out elsewhere. Request a new OTP to continue.',
@@ -566,7 +816,7 @@
                 }
                 trackedCoursesRefreshInFlight = true;
                 try {
-                    await loadTrackedCourses();
+                    await loadSignedInDashboardData();
                 } catch (_) {
                     // Ignore transient refresh failures and retry on next interval.
                 } finally {
@@ -619,6 +869,34 @@
             const data = await apiRequest('/api/tracked-courses');
             trackedCourses = data.items || [];
             renderList();
+        }
+
+        async function loadNotificationAttempts() {
+            if (!authUser) {
+                notificationAttempts = [];
+                notificationAttemptsLoadState = 'idle';
+                renderNotificationAttempts();
+                return;
+            }
+
+            try {
+                const data = await apiRequest('/api/notification-attempts?limit=10');
+                notificationAttempts = Array.isArray(data.items) ? data.items : [];
+                notificationAttemptsLoadState = 'ready';
+                renderNotificationAttempts();
+            } catch (error) {
+                if (wasSessionRecoveryHandled(error)) {
+                    throw error;
+                }
+                console.error(error);
+                notificationAttempts = [];
+                notificationAttemptsLoadState = 'unavailable';
+                renderNotificationAttempts();
+            }
+        }
+
+        async function loadSignedInDashboardData() {
+            await Promise.all([loadTrackedCourses(), loadNotificationAttempts()]);
         }
 
         async function sendOtp() {
@@ -702,7 +980,7 @@
             }
 
             try {
-                await loadTrackedCourses();
+                await loadSignedInDashboardData();
                 setAuthMessage('Signed in successfully. You can now manage your tracked courses.', 'success');
                 setTrackMessage('You are signed in. Add a REM code to start tracking a course.', 'info');
                 document.getElementById('courseCode').focus();
@@ -711,8 +989,8 @@
                     return;
                 }
                 console.error(error);
-                setAuthMessage('Signed in, but we could not load your tracked courses yet. Refresh or try again.', 'warning');
-                setTrackMessage('Your session is active, but the tracked-course list could not be loaded right now.', 'warning');
+                setAuthMessage('Signed in, but we could not load your dashboard data yet. Refresh or try again.', 'warning');
+                setTrackMessage('Your session is active, but tracked courses or notification history could not be loaded right now.', 'warning');
             }
         }
 
@@ -725,9 +1003,12 @@
             }
             authUser = null;
             trackedCourses = [];
+            notificationAttempts = [];
+            notificationAttemptsLoadState = 'idle';
             document.getElementById('otpCode').value = '';
             setOtpSectionVisible(false);
             renderList();
+            renderNotificationAttempts();
             updateAuthUi();
             setAuthMessage('Signed out. Request a new OTP whenever you want to manage tracked courses again.', 'info');
             setTrackMessage('You are signed out, so tracking changes are disabled until you sign back in.', 'info');
@@ -901,20 +1182,93 @@
             });
         }
 
+        function renderNotificationAttempts() {
+            const list = document.getElementById('notificationAttemptsList');
+            list.innerHTML = '';
+
+            if (!authUser) {
+                setNotificationHint('Sign in to view recent notification delivery history.');
+                setNotificationSummaryStatus('Optional');
+                list.innerHTML = '<li class="empty-state">Sign in to view recent notification attempts.</li>';
+                return;
+            }
+
+            if (notificationAttemptsLoadState === 'unavailable') {
+                setNotificationHint('We could not load recent notification history right now. Your tracked courses still work, and we will retry automatically.');
+                setNotificationSummaryStatus('Unavailable');
+                list.innerHTML = '<li class="empty-state">Notification history is temporarily unavailable.</li>';
+                return;
+            }
+
+            if (notificationAttempts.length === 0) {
+                setNotificationHint('We will show your recent delivery attempts here once a notification is queued, retried, sent, or suppressed.');
+                setNotificationSummaryStatus('No recent activity');
+                list.innerHTML = '<li class="empty-state">No notification attempts yet.</li>';
+                return;
+            }
+
+            setNotificationHint('Recent delivery attempts for your account. Use this to confirm whether an email was sent, retried, suppressed, or failed.');
+            setNotificationSummaryStatus(`${notificationAttempts.length} recent`);
+            notificationAttempts.forEach((attempt) => {
+                const status = String(attempt.status || '').toLowerCase();
+                const statusTone = getNotificationStatusTone(status);
+                const statusLabel = getNotificationStatusLabel(status);
+                const courseLabel = attempt.courseName || attempt.cartId || 'Tracked course';
+                const cartIdSuffix = attempt.cartId ? ` (${attempt.cartId})` : '';
+                const meta = describeNotificationAttemptMeta(attempt);
+                const detail = describeNotificationAttemptDetail(attempt);
+                const detailClass =
+                    status === 'failed' || status === 'retrying'
+                        ? 'notification-detail notification-detail-error'
+                        : 'notification-detail';
+
+                const li = document.createElement('li');
+                li.className = 'notification-item';
+                li.innerHTML = `
+                    <div class="notification-header">
+                        <div class="course-info">
+                            <strong>${escapeHtml(courseLabel)}${escapeHtml(cartIdSuffix)}</strong>
+                        </div>
+                        <span class="status-badge status-${escapeHtml(statusTone)}">${escapeHtml(statusLabel)}</span>
+                    </div>
+                    <div class="notification-meta">${escapeHtml(meta)}</div>
+                    ${detail ? `<div class="${detailClass}">${escapeHtml(detail)}</div>` : ''}
+                `;
+                list.appendChild(li);
+            });
+        }
+
         async function initializePage() {
             try {
                 await loadAuthSession();
-                await loadTrackedCourses();
             } catch (error) {
                 console.error(error);
                 authUser = null;
                 trackedCourses = [];
+                notificationAttempts = [];
+                notificationAttemptsLoadState = 'idle';
                 renderList();
+                renderNotificationAttempts();
                 updateAuthUi();
                 setAuthMessage('We could not restore your session automatically. Sign in to continue.', 'warning');
+                renderList();
+                renderNotificationAttempts();
+                return;
+            }
+
+            try {
+                await loadSignedInDashboardData();
+            } catch (error) {
+                if (wasSessionRecoveryHandled(error)) {
+                    return;
+                }
+                console.error(error);
+                setAuthMessage('Your session is active, but parts of the dashboard could not be loaded yet. Refresh or try again.', 'warning');
+                setTrackMessage('Tracked courses may be temporarily unavailable right now, but you do not need to sign in again.', 'warning');
             }
 
             renderList();
+            renderNotificationAttempts();
         }
 
         document.getElementById('email').addEventListener('input', (event) => {
@@ -957,7 +1311,7 @@
         document.addEventListener('visibilitychange', async () => {
             if (!document.hidden && authUser) {
                 try {
-                    await loadTrackedCourses();
+                    await loadSignedInDashboardData();
                 } catch (_) {
                     // Ignore focus refresh errors.
                 }

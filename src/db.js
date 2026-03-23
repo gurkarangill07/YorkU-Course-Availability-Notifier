@@ -1552,6 +1552,41 @@ function createDb({ databaseUrl }) {
     return mapNotificationAttemptRow(rows[0]);
   }
 
+  async function listNotificationAttemptsByUser(userId, { limit = 25 } = {}) {
+    const normalizedUserId = Number.parseInt(String(userId || ""), 10);
+    if (!Number.isFinite(normalizedUserId) || normalizedUserId <= 0) {
+      return [];
+    }
+
+    const safeLimit = Math.min(100, parsePositiveInt(limit, 25));
+    const { rows } = await pool.query(
+      `
+      SELECT
+        na.*,
+        COALESCE(uc.user_id, na.user_id) AS resolved_user_id,
+        COALESCE(uc.display_name, c.course_name, na.cart_id) AS course_name
+      FROM notification_attempts na
+      LEFT JOIN user_courses uc
+        ON uc.id = na.user_course_id
+      LEFT JOIN courses c
+        ON c.cart_id = na.cart_id
+      WHERE COALESCE(na.user_id, uc.user_id) = $1
+      ORDER BY na.created_at DESC, na.id DESC
+      LIMIT $2
+      `,
+      [normalizedUserId, safeLimit]
+    );
+
+    return rows.map((row) => {
+      const mapped = mapNotificationAttemptRow(row);
+      return {
+        ...mapped,
+        userId: row.resolved_user_id ? Number(row.resolved_user_id) : mapped.userId,
+        courseName: row.course_name || mapped.cartId
+      };
+    });
+  }
+
   async function getSharedLatestJspFile() {
     const { rows } = await pool.query(
       `
@@ -1701,6 +1736,7 @@ function createDb({ databaseUrl }) {
     claimDueNotificationAttempts,
     markNotificationAttemptSent,
     markNotificationAttemptFailure,
+    listNotificationAttemptsByUser,
     getSharedLatestJspFile,
     saveSharedLatestJspFile,
     trackCourseForUser

@@ -11,6 +11,7 @@ CourseNotif monitors tracked courses and notifies users when seats open (`os > 0
   - authenticated session view shows the signed-in email in the input
   - inline auth/session recovery guidance instead of generic browser alerts for most sign-in and session-expiry flows
   - adding/listing/removing tracked courses
+  - recent notification-attempt reporting for signed-in users
   - pause/resume tracking controls
   - per-course tracking status labels
   - stricter 6-character cart-id validation with inline input guidance
@@ -436,6 +437,7 @@ bash scripts/uninstall-monitor-launchd.sh
 - `POST /api/auth/verify-otp`
 - `POST /api/auth/logout`
 - `GET /api/tracked-courses` (auth required)
+- `GET /api/notification-attempts` (auth required)
 - `POST /api/tracked-courses` (auth required)
 - `POST /api/tracked-courses/:id/pause` (auth required)
 - `POST /api/tracked-courses/:id/resume` (auth required)
@@ -443,7 +445,7 @@ bash scripts/uninstall-monitor-launchd.sh
 
 ## Current limitations
 
-- No dedicated UI/reporting page for notification delivery attempts yet.
+- Notification-attempt reporting is recent-history and user-scoped today; there is no separate admin dashboard or export view yet.
 - OTP auth is implemented, but no external identity provider yet.
 - Deterministic browser-path coverage now exists for init-login and session-recovery flows, but CI still does not exercise the live VSB site or selector drift.
 - Ops alerting is email/watchdog driven today; there is not yet a hosted dashboard or pager integration.
