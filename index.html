@@ -400,10 +400,11 @@
         </details>
     </div>
 
-    <script>
-        let trackedCourses = [];
-        let notificationAttempts = [];
-        let authUser = null;
+        <script>
+            let trackedCourses = [];
+            let notificationAttempts = [];
+            let notificationAttemptsLoadState = 'idle';
+            let authUser = null;
         let otpCooldownEndTs = 0;
         let otpCooldownIntervalId = null;
         let trackedCoursesRefreshIntervalId = null;
@@ -585,11 +586,21 @@
 
         function describeNotificationAttemptMeta(attempt) {
             const parts = [];
+            const status = String(attempt && attempt.status ? attempt.status : '').toLowerCase();
             const attemptCount = Number(attempt && attempt.attemptCount);
             const maxAttempts = Number(attempt && attempt.maxAttempts);
 
-            if (Number.isFinite(attemptCount) && Number.isFinite(maxAttempts) && maxAttempts > 0) {
+            if (
+                Number.isFinite(attemptCount) &&
+                Number.isFinite(maxAttempts) &&
+                maxAttempts > 0 &&
+                attemptCount > 0
+            ) {
                 parts.push(`Attempt ${attemptCount} of ${maxAttempts}`);
+            } else if (status === 'pending') {
+                parts.push('Queued, not attempted yet');
+            } else if (status === 'suppressed') {
+                parts.push('Suppressed before sending');
             }
 
             if (attempt && attempt.sentAt) {
@@ -716,6 +727,7 @@
             authUser = null;
             trackedCourses = [];
             notificationAttempts = [];
+            notificationAttemptsLoadState = 'idle';
             document.getElementById('otpCode').value = '';
             setOtpSectionVisible(false);
             renderList();
@@ -862,13 +874,25 @@
         async function loadNotificationAttempts() {
             if (!authUser) {
                 notificationAttempts = [];
+                notificationAttemptsLoadState = 'idle';
                 renderNotificationAttempts();
                 return;
             }
 
-            const data = await apiRequest('/api/notification-attempts?limit=10');
-            notificationAttempts = Array.isArray(data.items) ? data.items : [];
-            renderNotificationAttempts();
+            try {
+                const data = await apiRequest('/api/notification-attempts?limit=10');
+                notificationAttempts = Array.isArray(data.items) ? data.items : [];
+                notificationAttemptsLoadState = 'ready';
+                renderNotificationAttempts();
+            } catch (error) {
+                if (wasSessionRecoveryHandled(error)) {
+                    throw error;
+                }
+                console.error(error);
+                notificationAttempts = [];
+                notificationAttemptsLoadState = 'unavailable';
+                renderNotificationAttempts();
+            }
         }
 
         async function loadSignedInDashboardData() {
@@ -980,6 +1004,7 @@
             authUser = null;
             trackedCourses = [];
             notificationAttempts = [];
+            notificationAttemptsLoadState = 'idle';
             document.getElementById('otpCode').value = '';
             setOtpSectionVisible(false);
             renderList();
@@ -1168,6 +1193,13 @@
                 return;
             }
 
+            if (notificationAttemptsLoadState === 'unavailable') {
+                setNotificationHint('We could not load recent notification history right now. Your tracked courses still work, and we will retry automatically.');
+                setNotificationSummaryStatus('Unavailable');
+                list.innerHTML = '<li class="empty-state">Notification history is temporarily unavailable.</li>';
+                return;
+            }
+
             if (notificationAttempts.length === 0) {
                 setNotificationHint('We will show your recent delivery attempts here once a notification is queued, retried, sent, or suppressed.');
                 setNotificationSummaryStatus('No recent activity');
@@ -1209,16 +1241,30 @@
         async function initializePage() {
             try {
                 await loadAuthSession();
-                await loadSignedInDashboardData();
             } catch (error) {
                 console.error(error);
                 authUser = null;
                 trackedCourses = [];
                 notificationAttempts = [];
+                notificationAttemptsLoadState = 'idle';
                 renderList();
                 renderNotificationAttempts();
                 updateAuthUi();
                 setAuthMessage('We could not restore your session automatically. Sign in to continue.', 'warning');
+                renderList();
+                renderNotificationAttempts();
+                return;
+            }
+
+            try {
+                await loadSignedInDashboardData();
+            } catch (error) {
+                if (wasSessionRecoveryHandled(error)) {
+                    return;
+                }
+                console.error(error);
+                setAuthMessage('Your session is active, but parts of the dashboard could not be loaded yet. Refresh or try again.', 'warning');
+                setTrackMessage('Tracked courses may be temporarily unavailable right now, but you do not need to sign in again.', 'warning');
             }
 
             renderList();
