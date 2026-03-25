@@ -932,6 +932,13 @@ function createApiApp({
           item: mapTrackedCourseRow(tracked)
         });
       } catch (error) {
+        if (error && error.code === "TRACKED_COURSE_LIMIT_REACHED") {
+          return res.status(409).json({
+            error: error.message,
+            code: error.code,
+            limit: Number(error.limit) || 3
+          });
+        }
         return next(error);
       }
     }
