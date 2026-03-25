@@ -44,6 +44,22 @@ test("validateRuntimeConfig: api allows SMTP_PASS fallback for OTP", () => {
   assert.ok(result.warnings.some((msg) => msg.includes("SMTP_PASS_AUTH")));
 });
 
+test("validateRuntimeConfig: api warns when observability auth is unset", () => {
+  const result = validate("api", { METRICS_BEARER_TOKEN: "" });
+  assertNoErrors(result);
+  assert.ok(
+    result.warnings.some((msg) => msg.includes("METRICS_BEARER_TOKEN"))
+  );
+});
+
+test("validateRuntimeConfig: api warns when secure cookies are disabled", () => {
+  const result = validate("api", { AUTH_COOKIE_SECURE: "false" });
+  assertNoErrors(result);
+  assert.ok(
+    result.warnings.some((msg) => msg.includes("AUTH_COOKIE_SECURE=false"))
+  );
+});
+
 test("validateRuntimeConfig: worker requires SMTP only in monitoring modes", () => {
   const result = validate(
     "worker",

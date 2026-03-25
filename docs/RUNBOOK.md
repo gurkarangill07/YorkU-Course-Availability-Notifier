@@ -19,25 +19,19 @@ This runbook covers common production/runtime incidents for:
 curl -sS http://localhost:3000/api/health
 
 # Worker health (API surface)
-curl -sS http://localhost:3000/api/worker-health
+curl -sS -H "Authorization: Bearer $METRICS_BEARER_TOKEN" http://localhost:3000/api/worker-health
 
 # Worker health (local CLI)
 npm run monitor:health
 
 # Metrics
-curl -sS http://localhost:3000/api/metrics
+curl -sS -H "Authorization: Bearer $METRICS_BEARER_TOKEN" http://localhost:3000/api/metrics
 
 # Worker-only metrics
-curl -sS http://localhost:3000/api/worker-metrics
-```
-
-If `METRICS_BEARER_TOKEN` is configured:
-
-```bash
-curl -sS -H "Authorization: Bearer $METRICS_BEARER_TOKEN" http://localhost:3000/api/metrics
 curl -sS -H "Authorization: Bearer $METRICS_BEARER_TOKEN" http://localhost:3000/api/worker-metrics
-curl -sS -H "Authorization: Bearer $METRICS_BEARER_TOKEN" http://localhost:3000/api/worker-health
 ```
+
+These observability endpoints stay disabled until `METRICS_BEARER_TOKEN` is configured.
 
 Automated watchdog check:
 

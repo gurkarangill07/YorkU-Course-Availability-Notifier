@@ -97,7 +97,7 @@ Goal: make runtime behavior visible and recoverable.
 Delivered so far:
 
 - Structured logs are implemented across API, worker, monitor, notification, and VSB source modules.
-- API exposes Prometheus-style metrics at `/api/metrics` (optional bearer auth).
+- API exposes Prometheus-style metrics at `/api/metrics` behind bearer auth when `METRICS_BEARER_TOKEN` is configured.
 - API now also exposes worker-only metrics at `/api/worker-metrics` for centralized scraping.
 - Worker heartbeat snapshots and health evaluation are implemented:
   - `/api/worker-health`

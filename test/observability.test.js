@@ -186,6 +186,142 @@ test("API /api/metrics enforces bearer auth and serves metrics", async (t) => {
   }
 });
 
+test("API observability endpoints stay disabled until bearer auth is configured", async (t) => {
+  metrics.reset();
+  const app = createApiApp({
+    db: {},
+    notifierModule: {
+      sendLoginOtpEmail: async () => {},
+      sendCourseOpenEmail: async () => ({ messageId: "mid" }),
+      sendSessionExpiredEmail: async () => {}
+    },
+    env: {
+      ...process.env,
+      OTP_PEPPER: process.env.OTP_PEPPER || "test-pepper",
+      AUTH_COOKIE_SECURE: "false",
+      METRICS_BEARER_TOKEN: ""
+    }
+  });
+  const server = http.createServer(app);
+  const address = await listenOrSkip(server, t);
+  if (!address) {
+    return;
+  }
+  const baseUrl = `http://127.0.0.1:${address.port}`;
+
+  try {
+    const metricsResponse = await request(baseUrl, "/api/metrics");
+    assert.equal(metricsResponse.status, 503);
+    assert.equal(metricsResponse.json.ok, false);
+    assert.equal(metricsResponse.json.reason, "observability_auth_not_configured");
+
+    const workerMetricsResponse = await request(baseUrl, "/api/worker-metrics");
+    assert.equal(workerMetricsResponse.status, 503);
+    assert.equal(
+      workerMetricsResponse.json.reason,
+      "observability_auth_not_configured"
+    );
+
+    const workerHealthResponse = await request(baseUrl, "/api/worker-health");
+    assert.equal(workerHealthResponse.status, 503);
+    assert.equal(
+      workerHealthResponse.json.reason,
+      "observability_auth_not_configured"
+    );
+  } finally {
+    metrics.reset();
+    await new Promise((resolve) => server.close(resolve));
+  }
+});
+
+test("API responses include baseline security headers", async (t) => {
+  const app = createApiApp({
+    db: {},
+    notifierModule: {
+      sendLoginOtpEmail: async () => {},
+      sendCourseOpenEmail: async () => ({ messageId: "mid" }),
+      sendSessionExpiredEmail: async () => {}
+    },
+    env: {
+      ...process.env,
+      OTP_PEPPER: process.env.OTP_PEPPER || "test-pepper",
+      AUTH_COOKIE_SECURE: "false",
+      METRICS_BEARER_TOKEN: "secret-token"
+    }
+  });
+  const server = http.createServer(app);
+  const address = await listenOrSkip(server, t);
+  if (!address) {
+    return;
+  }
+  const baseUrl = `http://127.0.0.1:${address.port}`;
+
+  try {
+    const health = await request(baseUrl, "/api/health");
+    assert.equal(health.status, 200);
+    assert.equal(health.headers.get("x-content-type-options"), "nosniff");
+    assert.equal(health.headers.get("x-frame-options"), "DENY");
+    assert.equal(health.headers.get("referrer-policy"), "same-origin");
+    assert.equal(health.headers.get("x-powered-by"), null);
+    assert.match(
+      String(health.headers.get("content-security-policy") || ""),
+      /default-src 'self'/
+    );
+    assert.match(
+      String(health.headers.get("content-security-policy") || ""),
+      /frame-ancestors 'none'/
+    );
+  } finally {
+    await new Promise((resolve) => server.close(resolve));
+  }
+});
+
+test("API malformed JSON responses still include baseline security headers", async (t) => {
+  const app = createApiApp({
+    db: {},
+    notifierModule: {
+      sendLoginOtpEmail: async () => {},
+      sendCourseOpenEmail: async () => ({ messageId: "mid" }),
+      sendSessionExpiredEmail: async () => {}
+    },
+    env: {
+      ...process.env,
+      OTP_PEPPER: process.env.OTP_PEPPER || "test-pepper",
+      AUTH_COOKIE_SECURE: "false",
+      METRICS_BEARER_TOKEN: "secret-token"
+    }
+  });
+  const server = http.createServer(app);
+  const address = await listenOrSkip(server, t);
+  if (!address) {
+    return;
+  }
+  const baseUrl = `http://127.0.0.1:${address.port}`;
+
+  try {
+    const response = await fetch(`${baseUrl}/api/auth/send-otp`, {
+      method: "POST",
+      headers: {
+        "content-type": "application/json"
+      },
+      body: "{"
+    });
+    const text = await response.text();
+
+    assert.equal(response.status, 500);
+    assert.equal(response.headers.get("x-content-type-options"), "nosniff");
+    assert.equal(response.headers.get("x-frame-options"), "DENY");
+    assert.equal(response.headers.get("referrer-policy"), "same-origin");
+    assert.match(
+      String(response.headers.get("content-security-policy") || ""),
+      /default-src 'self'/
+    );
+    assert.match(text, /internal server error/i);
+  } finally {
+    await new Promise((resolve) => server.close(resolve));
+  }
+});
+
 test("API /api/worker-health returns healthy and stale states", async (t) => {
   metrics.reset();
   const healthPath = path.join(

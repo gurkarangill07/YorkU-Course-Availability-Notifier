@@ -67,6 +67,20 @@ function normalizeCourseName(value) {
   return courseName;
 }
 
+function buildContentSecurityPolicy() {
+  return [
+    "default-src 'self'",
+    "base-uri 'self'",
+    "connect-src 'self'",
+    "form-action 'self'",
+    "frame-ancestors 'none'",
+    "img-src 'self' data:",
+    "object-src 'none'",
+    "script-src 'self' 'unsafe-inline'",
+    "style-src 'self' 'unsafe-inline'"
+  ].join("; ");
+}
+
 function normalizeOtp(value) {
   const otp = String(value || "")
     .trim()
@@ -313,7 +327,7 @@ function createApiApp({
     5
   );
   const authSessionDays = parseIntWithFallback(env.AUTH_SESSION_DAYS, 30);
-  const authCookieSecure = parseBoolean(env.AUTH_COOKIE_SECURE, false);
+  const authCookieSecure = parseBoolean(env.AUTH_COOKIE_SECURE, true);
   const otpPepper = String(env.OTP_PEPPER || "").trim();
   const authSessionMaxAgeMs = authSessionDays * 24 * 60 * 60 * 1000;
   const metricsBearerToken = String(env.METRICS_BEARER_TOKEN || "").trim();
@@ -384,6 +398,14 @@ function createApiApp({
     blockDurationMs: authenticatedWriteRateLimitWindowMs
   });
 
+  app.disable("x-powered-by");
+  app.use((req, res, next) => {
+    res.setHeader("Content-Security-Policy", buildContentSecurityPolicy());
+    res.setHeader("Referrer-Policy", "same-origin");
+    res.setHeader("X-Content-Type-Options", "nosniff");
+    res.setHeader("X-Frame-Options", "DENY");
+    next();
+  });
   app.use(express.json());
   app.use((req, res, next) => {
     const started = process.hrtime.bigint();
@@ -603,13 +625,29 @@ function createApiApp({
     res.json({ ok: true });
   });
 
+  function requireObservabilityAuth(req, res) {
+    if (!metricsBearerToken) {
+      return res.status(503).json({
+        ok: false,
+        reason: "observability_auth_not_configured",
+        error:
+          "Observability endpoints are disabled until METRICS_BEARER_TOKEN is configured."
+      });
+    }
+
+    const authorization = String(req.headers.authorization || "").trim();
+    const expected = `Bearer ${metricsBearerToken}`;
+    if (authorization !== expected) {
+      return res.status(401).json({ error: "Unauthorized." });
+    }
+
+    return null;
+  }
+
   app.get("/api/metrics", (req, res) => {
-    if (metricsBearerToken) {
-      const authorization = String(req.headers.authorization || "").trim();
-      const expected = `Bearer ${metricsBearerToken}`;
-      if (authorization !== expected) {
-        return res.status(401).json({ error: "Unauthorized." });
-      }
+    const authFailure = requireObservabilityAuth(req, res);
+    if (authFailure) {
+      return authFailure;
     }
 
     res.set("Content-Type", "text/plain; version=0.0.4; charset=utf-8");
@@ -617,12 +655,9 @@ function createApiApp({
   });
 
   app.get("/api/worker-metrics", async (req, res) => {
-    if (metricsBearerToken) {
-      const authorization = String(req.headers.authorization || "").trim();
-      const expected = `Bearer ${metricsBearerToken}`;
-      if (authorization !== expected) {
-        return res.status(401).json({ error: "Unauthorized." });
-      }
+    const authFailure = requireObservabilityAuth(req, res);
+    if (authFailure) {
+      return authFailure;
     }
 
     try {
@@ -642,12 +677,9 @@ function createApiApp({
   });
 
   app.get("/api/worker-health", async (req, res) => {
-    if (metricsBearerToken) {
-      const authorization = String(req.headers.authorization || "").trim();
-      const expected = `Bearer ${metricsBearerToken}`;
-      if (authorization !== expected) {
-        return res.status(401).json({ error: "Unauthorized." });
-      }
+    const authFailure = requireObservabilityAuth(req, res);
+    if (authFailure) {
+      return authFailure;
     }
 
     try {
