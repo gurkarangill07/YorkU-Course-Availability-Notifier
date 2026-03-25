@@ -1,4 +1,16 @@
 const { Pool } = require("pg");
+const MAX_TRACKED_COURSES_PER_USER = 3;
+
+class TrackedCourseLimitError extends Error {
+  constructor(limit = MAX_TRACKED_COURSES_PER_USER) {
+    super(
+      `You can track up to ${limit} courses at a time. Remove one before adding another.`
+    );
+    this.name = "TrackedCourseLimitError";
+    this.code = "TRACKED_COURSE_LIMIT_REACHED";
+    this.limit = limit;
+  }
+}
 
 function parsePositiveInt(value, fallback) {
   const parsed = Number.parseInt(value, 10);
@@ -1649,51 +1661,103 @@ function createDb({ databaseUrl }) {
       typeof displayName === "string" && displayName.trim()
         ? displayName.trim()
         : null;
-
-    const { rows } = await pool.query(
-      `
-      INSERT INTO user_courses (
-        user_id,
-        cart_id,
-        display_name,
-        tracking_status,
-        notified_at,
-        invalid_attempts,
-        invalid_notified_at,
-        requires_fresh_scan,
-        created_at
-      )
-      VALUES ($1, $2, $3, 'active', NULL, 0, NULL, TRUE, NOW())
-      ON CONFLICT (user_id, cart_id) DO NOTHING
-      RETURNING id
-      `,
-      [userId, cartId, normalizedDisplayName]
-    );
-
-    const inserted = rows[0] || null;
-    if (inserted) {
-      await pool.query(
+    const client = await pool.connect();
+    try {
+      await client.query("BEGIN");
+      const { rows: userRows } = await client.query(
         `
-        UPDATE notification_attempts
-        SET
-          idempotency_key = idempotency_key || ':archived:' || id::text || ':' ||
-            FLOOR(EXTRACT(EPOCH FROM NOW()) * 1000)::text,
-          suppression_key = CASE
-            WHEN suppression_key IS NULL THEN NULL
-            ELSE suppression_key || ':archived:' || id::text || ':' ||
-              FLOOR(EXTRACT(EPOCH FROM NOW()) * 1000)::text
-          END,
-          updated_at = NOW()
-        WHERE
-          event_type = 'course_open'
-          AND user_id = $1
-          AND cart_id = $2
+        SELECT id
+        FROM users
+        WHERE id = $1
+        FOR UPDATE
+        `,
+        [userId]
+      );
+      if (!userRows[0]) {
+        throw new Error(`User not found for tracked course insert: ${userId}`);
+      }
+
+      const { rows: existingRows } = await client.query(
+        `
+        SELECT id
+        FROM user_courses
+        WHERE user_id = $1 AND cart_id = $2
+        LIMIT 1
         `,
         [userId, cartId]
       );
-    }
+      if (existingRows[0]) {
+        await client.query("COMMIT");
+        return null;
+      }
 
-    return inserted;
+      const { rows: countRows } = await client.query(
+        `
+        SELECT COUNT(*)::integer AS tracked_count
+        FROM user_courses
+        WHERE user_id = $1
+        `,
+        [userId]
+      );
+      const trackedCount = Number(countRows[0] && countRows[0].tracked_count) || 0;
+      if (trackedCount >= MAX_TRACKED_COURSES_PER_USER) {
+        throw new TrackedCourseLimitError();
+      }
+
+      const { rows } = await client.query(
+        `
+        INSERT INTO user_courses (
+          user_id,
+          cart_id,
+          display_name,
+          tracking_status,
+          notified_at,
+          invalid_attempts,
+          invalid_notified_at,
+          requires_fresh_scan,
+          created_at
+        )
+        VALUES ($1, $2, $3, 'active', NULL, 0, NULL, TRUE, NOW())
+        RETURNING id
+        `,
+        [userId, cartId, normalizedDisplayName]
+      );
+
+      const inserted = rows[0] || null;
+      if (inserted) {
+        await client.query(
+          `
+          UPDATE notification_attempts
+          SET
+            idempotency_key = idempotency_key || ':archived:' || id::text || ':' ||
+              FLOOR(EXTRACT(EPOCH FROM NOW()) * 1000)::text,
+            suppression_key = CASE
+              WHEN suppression_key IS NULL THEN NULL
+              ELSE suppression_key || ':archived:' || id::text || ':' ||
+                FLOOR(EXTRACT(EPOCH FROM NOW()) * 1000)::text
+            END,
+            updated_at = NOW()
+          WHERE
+            event_type = 'course_open'
+            AND user_id = $1
+            AND cart_id = $2
+          `,
+          [userId, cartId]
+        );
+      }
+
+      await client.query("COMMIT");
+      return inserted;
+    } catch (error) {
+      try {
+        await client.query("ROLLBACK");
+      } catch (_) {
+        // Ignore rollback failures from already-closed/aborted sessions.
+      }
+      throw error;
+    } finally {
+      client.release();
+    }
   }
 
   return {

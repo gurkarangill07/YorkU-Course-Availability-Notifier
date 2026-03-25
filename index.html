@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>CourseNotif - Student Utility</title>
+    <title>YorkU Course Availability Notifier</title>
     <style>
         /* Simple, clean utility-focused CSS */
         :root {
@@ -348,7 +348,7 @@
 <body>
 
     <div class="container">
-        <h1>CourseNotif</h1>
+        <h1>YorkU Course Availability Notifier</h1>
 
         <!-- Section 1: Auth -->
         <div class="card">
@@ -705,6 +705,14 @@
 
         function describeTrackingError(error) {
             const message = String(error && error.message ? error.message : '').toLowerCase();
+            const limit = Number(error && error.data && error.data.limit);
+            if (
+                error &&
+                (error.status === 409 ||
+                 String(error && error.data && error.data.code || '').toUpperCase() === 'TRACKED_COURSE_LIMIT_REACHED')
+            ) {
+                return `You can track up to ${Number.isFinite(limit) && limit > 0 ? limit : 3} courses at a time. Remove one before adding another.`;
+            }
             if (message.includes('cartid must be exactly 6 characters')) {
                 return 'Course code must be exactly 6 characters using only A-Z and 0-9.';
             }

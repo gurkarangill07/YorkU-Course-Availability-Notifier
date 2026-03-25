@@ -1,6 +1,6 @@
-# CourseNotif
+# YorkU Course Availability Notifier
 
-CourseNotif monitors tracked courses and notifies users when seats open (`os > 0`) using VSB `getClassData.jsp` responses.
+YorkU Course Availability Notifier monitors tracked courses and notifies users when seats open (`os > 0`) using VSB `getClassData.jsp` responses.
 
 ## Current status (implemented)
 
@@ -11,6 +11,7 @@ CourseNotif monitors tracked courses and notifies users when seats open (`os > 0
   - authenticated session view shows the signed-in email in the input
   - inline auth/session recovery guidance instead of generic browser alerts for most sign-in and session-expiry flows
   - adding/listing/removing tracked courses
+  - per-user tracked-course cap of 3 saved tracked courses total, with inline guidance when the limit is reached
   - recent notification-attempt reporting for signed-in users
   - pause/resume tracking controls
   - per-course tracking status labels
@@ -129,7 +130,7 @@ export SMTP_SECURE="true"
 export SMTP_USER="yourgmail@gmail.com"
 export SMTP_PASS="your_gmail_app_password"
 export SMTP_PASS_AUTH="your_auth_gmail_app_password"
-export SMTP_FROM="CourseNotif <yourgmail@gmail.com>"
+export SMTP_FROM="YorkU Course Availability Notifier <yourgmail@gmail.com>"
 ```
 
 Notification reliability policy (optional overrides):
@@ -442,6 +443,7 @@ bash scripts/uninstall-monitor-launchd.sh
 - `POST /api/tracked-courses/:id/pause` (auth required)
 - `POST /api/tracked-courses/:id/resume` (auth required)
 - `DELETE /api/tracked-courses/:id` (auth required)
+- `POST /api/tracked-courses` currently caps each user at 3 tracked courses total; posting an already-tracked cart still updates/resumes that existing row
 
 ## Current limitations
 

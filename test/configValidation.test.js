@@ -9,7 +9,7 @@ const BASE_ENV = {
   SMTP_USER: "mailer@example.com",
   SMTP_PASS: "smtp-pass",
   SMTP_PASS_AUTH: "smtp-auth-pass",
-  SMTP_FROM: "CourseNotif <mailer@example.com>",
+  SMTP_FROM: "YorkU Course Availability Notifier <mailer@example.com>",
   OTP_PEPPER: "pepper",
   APP_BASE_URL: "https://coursenotif.example.com",
   VSB_SOURCE_MODE: "db",

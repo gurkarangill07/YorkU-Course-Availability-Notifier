@@ -1,10 +1,10 @@
-# CourseNotif Context (Current Snapshot)
+# YorkU Course Availability Notifier Context (Current Snapshot)
 
-Last updated: March 21, 2026 (notification attempt reporting update)
+Last updated: March 24, 2026 (branding update)
 
 ## 1) Project identity
 
-- Project name: CourseNotif
+- Project name: YorkU Course Availability Notifier
 - Current stage: Implemented MVP (active development)
 - Architecture: Node.js app with Express API/UI + worker + PostgreSQL
 - Primary goal: Monitor tracked courses and notify users when seats open (`os > 0`)
@@ -51,6 +51,7 @@ Last updated: March 21, 2026 (notification attempt reporting update)
   - `POST /api/tracked-courses/:id/resume` (auth required)
   - `DELETE /api/tracked-courses/:id` (auth required)
 - `POST /api/tracked-courses` auto-resumes rows currently in `paused`/`notified`/`invalid` state
+- `POST /api/tracked-courses` caps each user at 3 tracked courses total; posting an already-tracked cart still updates/resumes that existing row
 - Tracked-course responses include status/detail fields (`trackingStatus`, `notifiedAt`, `invalidAttempts`, `invalidNotifiedAt`, `lastCheckedAt`, `lastObservedOs`, `requiresFreshScan`)
 - Auth hardening now includes:
   - route-level rate limiting on OTP endpoints
@@ -66,6 +67,7 @@ Last updated: March 21, 2026 (notification attempt reporting update)
   - inline auth/session recovery messaging for OTP errors, signed-out actions, and expired sessions
   - logout
   - adding tracked courses
+  - inline guidance when the per-user 3-course tracking cap is reached
   - optional custom course name
   - listing tracked courses with tracking status text
   - showing recent notification attempts with delivery status, timestamps, and last error/provider detail

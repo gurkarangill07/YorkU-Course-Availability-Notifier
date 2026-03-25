@@ -282,6 +282,152 @@ test(
 );
 
 test(
+  "API integration: tracked course limit caps users at 3 without breaking resume flow",
+  { skip: !process.env.DATABASE_URL },
+  async () => {
+    const db = createDb({ databaseUrl: process.env.DATABASE_URL });
+    await db.ensureCompatibility();
+
+    const otpCodesByEmail = new Map();
+    const notifierModule = {
+      sendLoginOtpEmail: async ({ toEmail, otpCode }) => {
+        otpCodesByEmail.set(String(toEmail || "").trim().toLowerCase(), String(otpCode || ""));
+      },
+      sendCourseOpenEmail: async () => ({ messageId: "test-message-id" }),
+      sendSessionExpiredEmail: async () => {}
+    };
+
+    const env = {
+      ...process.env,
+      OTP_PEPPER: process.env.OTP_PEPPER || "test-pepper",
+      AUTH_COOKIE_SECURE: "false"
+    };
+
+    const app = createApiApp({ db, notifierModule, env });
+    const server = http.createServer(app);
+
+    await new Promise((resolve) => server.listen(0, "127.0.0.1", resolve));
+    const address = server.address();
+    const baseUrl = `http://127.0.0.1:${address.port}`;
+
+    const suffix = randomSuffix();
+    const email = `track-limit-${suffix}@example.com`;
+    const numericSuffix = String(suffix).replace(/\D/g, "").slice(-5).padStart(5, "0");
+    const cartIds = [
+      `E${numericSuffix}`,
+      `F${numericSuffix}`,
+      `G${numericSuffix}`,
+      `H${numericSuffix}`
+    ];
+    const cleanupPool = new Pool({ connectionString: process.env.DATABASE_URL });
+
+    try {
+      await clearApiRateLimitKeys(cleanupPool, [
+        "ip:127.0.0.1",
+        `email:${email.toLowerCase()}`
+      ]);
+
+      const sendOtp = await requestJson(baseUrl, "/api/auth/send-otp", {
+        method: "POST",
+        body: { email }
+      });
+      assert.equal(sendOtp.status, 200);
+
+      const otpCode = otpCodesByEmail.get(email.toLowerCase());
+      assert.ok(/^\d{6}$/.test(String(otpCode || "")));
+
+      const verifyOtp = await requestJson(baseUrl, "/api/auth/verify-otp", {
+        method: "POST",
+        body: { email, otp: otpCode }
+      });
+      assert.equal(verifyOtp.status, 200);
+      const sessionCookie = verifyOtp.cookieHeader;
+
+      const createdIds = [];
+      for (const cartId of cartIds.slice(0, 3)) {
+        const createTrack = await requestJson(baseUrl, "/api/tracked-courses", {
+          method: "POST",
+          cookie: sessionCookie,
+          body: { cartId }
+        });
+        assert.equal(createTrack.status, 201);
+        assert.equal(createTrack.json.created, true);
+        createdIds.push(Number(createTrack.json.item.id));
+      }
+
+      const pauseTrack = await requestJson(
+        baseUrl,
+        `/api/tracked-courses/${createdIds[0]}/pause`,
+        {
+          method: "POST",
+          cookie: sessionCookie
+        }
+      );
+      assert.equal(pauseTrack.status, 200);
+
+      const resumeExisting = await requestJson(baseUrl, "/api/tracked-courses", {
+        method: "POST",
+        cookie: sessionCookie,
+        body: {
+          cartId: cartIds[0],
+          courseName: "Resume While At Limit"
+        }
+      });
+      assert.equal(resumeExisting.status, 200);
+      assert.equal(resumeExisting.json.created, false);
+      assert.equal(resumeExisting.json.resumed, true);
+      assert.equal(resumeExisting.json.item.trackingStatus, "active");
+      assert.equal(resumeExisting.json.item.courseName, "Resume While At Limit");
+
+      const overLimit = await requestJson(baseUrl, "/api/tracked-courses", {
+        method: "POST",
+        cookie: sessionCookie,
+        body: { cartId: cartIds[3] }
+      });
+      assert.equal(overLimit.status, 409);
+      assert.equal(overLimit.json.code, "TRACKED_COURSE_LIMIT_REACHED");
+      assert.equal(overLimit.json.limit, 3);
+      assert.match(String(overLimit.json.error || ""), /track up to 3 courses/i);
+
+      const list = await requestJson(baseUrl, "/api/tracked-courses", {
+        cookie: sessionCookie
+      });
+      assert.equal(list.status, 200);
+      assert.equal(list.json.items.length, 3);
+      assert.deepEqual(
+        list.json.items.map((item) => item.cartId).sort(),
+        cartIds.slice(0, 3).sort()
+      );
+    } finally {
+      await clearApiRateLimitKeys(cleanupPool, [
+        `email:${email.toLowerCase()}`,
+        "ip:127.0.0.1"
+      ]);
+      await cleanupPool.query(
+        "DELETE FROM notification_attempts WHERE to_email = $1 OR cart_id = ANY($2::text[])",
+        [email.toLowerCase(), cartIds]
+      );
+      await cleanupPool.query(
+        "DELETE FROM user_courses WHERE user_id IN (SELECT id FROM users WHERE email = $1)",
+        [email.toLowerCase()]
+      );
+      await cleanupPool.query("DELETE FROM courses WHERE cart_id = ANY($1::text[])", [cartIds]);
+      await cleanupPool.query("DELETE FROM auth_otp_challenges WHERE email = $1", [
+        email.toLowerCase()
+      ]);
+      await cleanupPool.query(
+        "DELETE FROM auth_sessions WHERE user_id IN (SELECT id FROM users WHERE email = $1)",
+        [email.toLowerCase()]
+      );
+      await cleanupPool.query("DELETE FROM users WHERE email = $1", [email.toLowerCase()]);
+      await cleanupPool.end();
+      await db.close();
+      await new Promise((resolve) => server.close(resolve));
+    }
+  }
+);
+
+test(
   "API integration: signed-in users can view recent notification attempts",
   { skip: !process.env.DATABASE_URL },
   async () => {
