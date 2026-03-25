@@ -19,6 +19,32 @@ function parseBoolean(value, fallback) {
   return fallback;
 }
 
+function escapeHtml(value) {
+  return String(value || "").replace(/[&<>"']/g, (character) => {
+    switch (character) {
+      case "&":
+        return "&amp;";
+      case "<":
+        return "&lt;";
+      case ">":
+        return "&gt;";
+      case '"':
+        return "&quot;";
+      case "'":
+        return "&#39;";
+      default:
+        return character;
+    }
+  });
+}
+
+function sanitizeEmailHeaderValue(value, fallback = "") {
+  const normalized = String(value || "")
+    .replace(/[\r\n]+/g, " ")
+    .trim();
+  return normalized || fallback;
+}
+
 function getSmtpConfig({ passEnvName = "SMTP_PASS" } = {}) {
   const host = process.env.SMTP_HOST || "smtp.gmail.com";
   const port = Number.parseInt(process.env.SMTP_PORT || "465", 10);
@@ -143,8 +169,14 @@ async function sendCourseOpenEmail({ toEmail, cartId, courseName, os }) {
   const courseTitle = String(courseName || cartIdText || "Tracked course").trim();
   const openSeats = Number.isFinite(Number(os)) ? Number(os) : 0;
   const appUrl = String(process.env.APP_BASE_URL || "http://localhost:3000").trim();
+  const safeCourseTitleHtml = escapeHtml(courseTitle);
+  const safeCartIdHtml = escapeHtml(cartIdText || "unknown");
+  const safeAppUrlHtml = escapeHtml(appUrl);
 
-  const subject = `Course ${cartIdText || courseTitle} is now open`;
+  const subject = sanitizeEmailHeaderValue(
+    `Course ${cartIdText || courseTitle} is now open`,
+    "Tracked course is now open"
+  );
   const text = [
     "Good news!",
     "",
@@ -158,10 +190,10 @@ async function sendCourseOpenEmail({ toEmail, cartId, courseName, os }) {
   ].join("\n");
   const html = [
     "<p><strong>Good news!</strong></p>",
-    `<p>${courseTitle} now has <strong>${openSeats}</strong> open seat(s).</p>`,
-    `<p>Cart ID: <code>${cartIdText || "unknown"}</code></p>`,
+    `<p>${safeCourseTitleHtml} now has <strong>${openSeats}</strong> open seat(s).</p>`,
+    `<p>Cart ID: <code>${safeCartIdHtml}</code></p>`,
     "<p>After you enroll, open YorkU Course Availability Notifier to either remove this course or track it again if it fills up.</p>",
-    `<p><a href="${appUrl}">Open YorkU Course Availability Notifier</a></p>`
+    `<p><a href="${safeAppUrlHtml}">Open YorkU Course Availability Notifier</a></p>`
   ].join("");
 
   return sendMail({
@@ -176,7 +208,13 @@ async function sendInvalidCourseEmail({ toEmail, cartId, courseName }) {
   const cartIdText = String(cartId || "").trim();
   const courseTitle = String(courseName || cartIdText || "Tracked course").trim();
   const appUrl = String(process.env.APP_BASE_URL || "http://localhost:3000").trim();
-  const subject = `Course code ${cartIdText || courseTitle} looks invalid`;
+  const safeCourseTitleHtml = escapeHtml(courseTitle);
+  const safeCartIdHtml = escapeHtml(cartIdText || "unknown");
+  const safeAppUrlHtml = escapeHtml(appUrl);
+  const subject = sanitizeEmailHeaderValue(
+    `Course code ${cartIdText || courseTitle} looks invalid`,
+    "Tracked course code looks invalid"
+  );
   const text = [
     "We could not find this course code after multiple checks.",
     "",
@@ -189,10 +227,10 @@ async function sendInvalidCourseEmail({ toEmail, cartId, courseName }) {
   const html = [
     "<p><strong>Course code not found.</strong></p>",
     "<p>We could not find this course code after multiple checks.</p>",
-    `<p>Course: ${courseTitle}</p>`,
-    `<p>Cart ID: <code>${cartIdText || "unknown"}</code></p>`,
+    `<p>Course: ${safeCourseTitleHtml}</p>`,
+    `<p>Cart ID: <code>${safeCartIdHtml}</code></p>`,
     "<p>Please verify the code and re-add it if needed.</p>",
-    `<p><a href="${appUrl}">Open YorkU Course Availability Notifier</a></p>`
+    `<p><a href="${safeAppUrlHtml}">Open YorkU Course Availability Notifier</a></p>`
   ].join("");
 
   await sendMail({
@@ -205,7 +243,7 @@ async function sendInvalidCourseEmail({ toEmail, cartId, courseName }) {
 
 async function sendSessionExpiredEmail({ toEmail, reason }) {
   const reasonText = String(reason || "Unknown session error").trim();
-  const subject = "VSB session expired or failed";
+  const subject = sanitizeEmailHeaderValue("VSB session expired or failed");
   const text = [
     "YorkU Course Availability Notifier detected a session problem while monitoring courses.",
     "",
@@ -229,9 +267,12 @@ async function sendOperationalAlertEmail({
 }) {
   const normalizedKey = String(alertKey || "operational_alert").trim();
   const normalizedSeverity = String(severity || "warning").trim().toUpperCase();
-  const subject = `[YorkU Course Availability Notifier] ${normalizedSeverity}: ${
-    String(summary || normalizedKey).trim() || "Operational alert"
-  }`;
+  const subject = sanitizeEmailHeaderValue(
+    `[YorkU Course Availability Notifier] ${normalizedSeverity}: ${
+      String(summary || normalizedKey).trim() || "Operational alert"
+    }`,
+    "[YorkU Course Availability Notifier] Operational alert"
+  );
   const lines = [
     "YorkU Course Availability Notifier detected an operational condition that needs attention.",
     "",
@@ -265,7 +306,9 @@ async function sendLoginOtpEmail({ toEmail, otpCode, expiresMinutes = 10 }) {
     ? Math.max(1, Number(expiresMinutes))
     : 10;
 
-  const subject = "Your YorkU Course Availability Notifier login code";
+  const subject = sanitizeEmailHeaderValue(
+    "Your YorkU Course Availability Notifier login code"
+  );
   const text = [
     "Use this one-time code to sign in to YorkU Course Availability Notifier:",
     "",
@@ -296,5 +339,12 @@ module.exports = {
   sendInvalidCourseEmail,
   sendSessionExpiredEmail,
   sendOperationalAlertEmail,
-  sendLoginOtpEmail
+  sendLoginOtpEmail,
+  __testOnly: {
+    escapeHtml,
+    sanitizeEmailHeaderValue,
+    resetTransporterCache() {
+      transporterCache.clear();
+    }
+  }
 };

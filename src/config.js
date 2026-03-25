@@ -300,6 +300,16 @@ function validateRuntimeConfig({ env = process.env, runtime, mode } = {}) {
         "APP_BASE_URL is not set; notification links will default to http://localhost:3000."
       );
     }
+    if (!isNonEmptyEnvValue(env.METRICS_BEARER_TOKEN)) {
+      warnings.push(
+        "METRICS_BEARER_TOKEN is not set; /api/metrics, /api/worker-metrics, and /api/worker-health will stay disabled."
+      );
+    }
+    if (!parseBoolEnv(env.AUTH_COOKIE_SECURE, true)) {
+      warnings.push(
+        "AUTH_COOKIE_SECURE=false should only be used for local HTTP development."
+      );
+    }
   }
 
   if (normalizedRuntime === "worker") {

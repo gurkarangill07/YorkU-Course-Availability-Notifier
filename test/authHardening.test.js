@@ -283,3 +283,53 @@ test("API DB-backed rate limits isolate send-otp and verify-otp counters", async
     await new Promise((resolve) => server.close(resolve));
   }
 });
+
+test("API auth sessions default to secure cookies", async (t) => {
+  const email = "secure-cookie@example.com";
+  const expectedOtp = "123456";
+  const db = {
+    cleanupExpiredAuthRecords: async () => {},
+    getLatestOtpChallengeByEmail: async () => ({
+      id: 17,
+      email,
+      otp_hash: hashSha256(`${email}|${expectedOtp}|test-pepper`),
+      expires_at: new Date(Date.now() + 10 * 60 * 1000).toISOString(),
+      failed_attempts: 0,
+      consumed_at: null,
+      created_at: new Date().toISOString()
+    }),
+    markOtpChallengeConsumed: async () => {},
+    incrementOtpChallengeFailedAttempts: async () => 1,
+    getOrCreateUserByEmail: async () => ({ id: 9, email }),
+    createAuthSession: async () => ({ id: 3 })
+  };
+  const app = createApiApp({
+    db,
+    notifierModule: createNotifierStub(),
+    env: {
+      OTP_PEPPER: "test-pepper"
+    }
+  });
+  const server = http.createServer(app);
+  const address = await listenOrSkip(server, t);
+  if (!address) {
+    return;
+  }
+  const baseUrl = `http://127.0.0.1:${address.port}`;
+
+  try {
+    const response = await requestJson(baseUrl, "/api/auth/verify-otp", {
+      method: "POST",
+      body: { email, otp: expectedOtp }
+    });
+
+    assert.equal(response.status, 200);
+    const setCookie = String(response.headers.get("set-cookie") || "");
+    assert.match(setCookie, /coursenotif_session=/);
+    assert.match(setCookie, /Secure/i);
+    assert.match(setCookie, /HttpOnly/i);
+    assert.match(setCookie, /SameSite=Lax/i);
+  } finally {
+    await new Promise((resolve) => server.close(resolve));
+  }
+});

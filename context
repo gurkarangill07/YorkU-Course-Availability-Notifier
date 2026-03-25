@@ -1,6 +1,6 @@
 # YorkU Course Availability Notifier Context (Current Snapshot)
 
-Last updated: March 24, 2026 (branding update)
+Last updated: March 25, 2026 (launch security hardening)
 
 ## 1) Project identity
 
@@ -37,9 +37,9 @@ Last updated: March 24, 2026 (branding update)
 - Express server in `src/apiServer.js`
 - Implemented endpoints:
   - `GET /api/health`
-  - `GET /api/metrics` (optional bearer auth)
-  - `GET /api/worker-metrics` (optional bearer auth)
-  - `GET /api/worker-health` (optional bearer auth)
+  - `GET /api/metrics` (requires bearer auth and stays disabled until `METRICS_BEARER_TOKEN` is configured)
+  - `GET /api/worker-metrics` (requires bearer auth and stays disabled until `METRICS_BEARER_TOKEN` is configured)
+  - `GET /api/worker-health` (requires bearer auth and stays disabled until `METRICS_BEARER_TOKEN` is configured)
   - `GET /api/auth/me`
   - `POST /api/auth/send-otp`
   - `POST /api/auth/verify-otp`
@@ -57,6 +57,8 @@ Last updated: March 24, 2026 (branding update)
   - route-level rate limiting on OTP endpoints
   - authenticated write throttling on tracked-course mutation endpoints
   - DB-backed shared rate limiting across API instances with isolated limiter buckets per route
+- API responses now include baseline hardening headers (`Content-Security-Policy`, `X-Content-Type-Options`, `X-Frame-Options`, `Referrer-Policy`) and suppress `X-Powered-By`
+- Auth cookies default to `Secure`; local HTTP development should explicitly set `AUTH_COOKIE_SECURE=false`
 - Serves `index.html` at `GET /`
 
 3. Frontend
@@ -167,10 +169,10 @@ Last updated: March 24, 2026 (branding update)
 9. Observability
 - Structured logging utility exists in `src/logger.js`
 - Metrics registry exists in `src/metrics.js`
-- API metrics endpoint exists: `GET /api/metrics` (optional bearer token)
-- Worker metrics scrape endpoint exists: `GET /api/worker-metrics` (optional bearer token)
+- API metrics endpoint exists: `GET /api/metrics` (requires bearer auth and is disabled until `METRICS_BEARER_TOKEN` is configured)
+- Worker metrics scrape endpoint exists: `GET /api/worker-metrics` (requires bearer auth and is disabled until `METRICS_BEARER_TOKEN` is configured)
 - Worker heartbeat + health evaluator exists in `src/workerHealth.js`
-- Worker health API endpoint exists: `GET /api/worker-health` (optional bearer token)
+- Worker health API endpoint exists: `GET /api/worker-health` (requires bearer auth and is disabled until `METRICS_BEARER_TOKEN` is configured)
 - Ops watchdog logic exists in `src/opsHardening.js`
 - Automated alert/restart entrypoint exists in `scripts/check-worker-health.js`
 - Supervisor mode now records crash-loop state/backoff for alerting and safer restart behavior
@@ -202,7 +204,7 @@ Last updated: March 24, 2026 (branding update)
 - Observability envs are supported:
   - `LOG_LEVEL`
   - `LOG_FORMAT`
-  - `METRICS_BEARER_TOKEN`
+  - `METRICS_BEARER_TOKEN` (required to enable the protected observability endpoints)
   - `WORKER_HEALTH_PATH`
   - `WORKER_METRICS_PATH`
   - `WORKER_HEALTH_MAX_STALE_SECONDS`

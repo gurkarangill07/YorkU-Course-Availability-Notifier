@@ -152,7 +152,7 @@ export AUTH_OTP_TTL_MINUTES="10"
 export AUTH_OTP_RESEND_COOLDOWN_SECONDS="60"
 export AUTH_OTP_MAX_FAILED_ATTEMPTS="5"
 export AUTH_SESSION_DAYS="30"
-export AUTH_COOKIE_SECURE="false"
+export AUTH_COOKIE_SECURE="true"              # set to false only for local HTTP development
 export AUTH_RATE_LIMIT_WINDOW_SECONDS="600"
 export AUTH_SEND_OTP_MAX_PER_IP="5"
 export AUTH_SEND_OTP_MAX_PER_EMAIL="3"
@@ -169,7 +169,7 @@ Observability and operations settings (optional but recommended):
 ```bash
 export LOG_LEVEL="info"                        # debug | info | warn | error
 export LOG_FORMAT="text"                       # text | json
-export METRICS_BEARER_TOKEN=""                 # set to require Bearer auth on /api/metrics, /api/worker-metrics, and /api/worker-health
+export METRICS_BEARER_TOKEN="change_this_metrics_token"  # required to enable /api/metrics, /api/worker-metrics, and /api/worker-health
 export WORKER_HEALTH_PATH="/tmp/coursenotif_worker_health.json"
 export WORKER_METRICS_PATH="/tmp/coursenotif_worker_metrics.prom"
 export WORKER_HEALTH_MAX_STALE_SECONDS="300"
@@ -367,18 +367,12 @@ npm run ci
 Metrics and health endpoints:
 
 ```bash
-curl -sS http://localhost:3000/api/metrics
-curl -sS http://localhost:3000/api/worker-metrics
-curl -sS http://localhost:3000/api/worker-health
-```
-
-If `METRICS_BEARER_TOKEN` is configured, include:
-
-```bash
 curl -sS -H "Authorization: Bearer $METRICS_BEARER_TOKEN" http://localhost:3000/api/metrics
 curl -sS -H "Authorization: Bearer $METRICS_BEARER_TOKEN" http://localhost:3000/api/worker-metrics
 curl -sS -H "Authorization: Bearer $METRICS_BEARER_TOKEN" http://localhost:3000/api/worker-health
 ```
+
+These observability endpoints return `503` until `METRICS_BEARER_TOKEN` is configured.
 
 ## Local env helpers (`.env.local`)
 
@@ -430,9 +424,9 @@ bash scripts/uninstall-monitor-launchd.sh
 ## API endpoints
 
 - `GET /api/health`
-- `GET /api/metrics` (optional bearer auth via `METRICS_BEARER_TOKEN`)
-- `GET /api/worker-metrics` (optional bearer auth via `METRICS_BEARER_TOKEN`)
-- `GET /api/worker-health` (optional bearer auth via `METRICS_BEARER_TOKEN`)
+- `GET /api/metrics` (requires bearer auth; disabled until `METRICS_BEARER_TOKEN` is configured)
+- `GET /api/worker-metrics` (requires bearer auth; disabled until `METRICS_BEARER_TOKEN` is configured)
+- `GET /api/worker-health` (requires bearer auth; disabled until `METRICS_BEARER_TOKEN` is configured)
 - `GET /api/auth/me`
 - `POST /api/auth/send-otp`
 - `POST /api/auth/verify-otp`
