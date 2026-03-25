@@ -1,6 +1,6 @@
-# CourseNotif
+# YorkU Course Availability Notifier
 
-CourseNotif monitors tracked courses and notifies users when seats open (`os > 0`) using VSB `getClassData.jsp` responses.
+YorkU Course Availability Notifier monitors tracked courses and notifies users when seats open (`os > 0`) using VSB `getClassData.jsp` responses.
 
 ## Current status (implemented)
 
@@ -130,7 +130,7 @@ export SMTP_SECURE="true"
 export SMTP_USER="yourgmail@gmail.com"
 export SMTP_PASS="your_gmail_app_password"
 export SMTP_PASS_AUTH="your_auth_gmail_app_password"
-export SMTP_FROM="CourseNotif <yourgmail@gmail.com>"
+export SMTP_FROM="YorkU Course Availability Notifier <yourgmail@gmail.com>"
 ```
 
 Notification reliability policy (optional overrides):

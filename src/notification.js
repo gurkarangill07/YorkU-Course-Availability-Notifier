@@ -151,7 +151,7 @@ async function sendCourseOpenEmail({ toEmail, cartId, courseName, os }) {
     `${courseTitle} now has ${openSeats} open seat(s).`,
     `Cart ID: ${cartIdText || "unknown"}`,
     "",
-    "After you enroll, open CourseNotif to either:",
+    "After you enroll, open YorkU Course Availability Notifier to either:",
     "- Remove this course from your list",
     "- Track it again if it becomes full",
     `Open: ${appUrl}`
@@ -160,8 +160,8 @@ async function sendCourseOpenEmail({ toEmail, cartId, courseName, os }) {
     "<p><strong>Good news!</strong></p>",
     `<p>${courseTitle} now has <strong>${openSeats}</strong> open seat(s).</p>`,
     `<p>Cart ID: <code>${cartIdText || "unknown"}</code></p>`,
-    "<p>After you enroll, open CourseNotif to either remove this course or track it again if it fills up.</p>",
-    `<p><a href="${appUrl}">Open CourseNotif</a></p>`
+    "<p>After you enroll, open YorkU Course Availability Notifier to either remove this course or track it again if it fills up.</p>",
+    `<p><a href="${appUrl}">Open YorkU Course Availability Notifier</a></p>`
   ].join("");
 
   return sendMail({
@@ -192,7 +192,7 @@ async function sendInvalidCourseEmail({ toEmail, cartId, courseName }) {
     `<p>Course: ${courseTitle}</p>`,
     `<p>Cart ID: <code>${cartIdText || "unknown"}</code></p>`,
     "<p>Please verify the code and re-add it if needed.</p>",
-    `<p><a href="${appUrl}">Open CourseNotif</a></p>`
+    `<p><a href="${appUrl}">Open YorkU Course Availability Notifier</a></p>`
   ].join("");
 
   await sendMail({
@@ -207,7 +207,7 @@ async function sendSessionExpiredEmail({ toEmail, reason }) {
   const reasonText = String(reason || "Unknown session error").trim();
   const subject = "VSB session expired or failed";
   const text = [
-    "CourseNotif detected a session problem while monitoring courses.",
+    "YorkU Course Availability Notifier detected a session problem while monitoring courses.",
     "",
     `Reason: ${reasonText}`
   ].join("\n");
@@ -229,11 +229,11 @@ async function sendOperationalAlertEmail({
 }) {
   const normalizedKey = String(alertKey || "operational_alert").trim();
   const normalizedSeverity = String(severity || "warning").trim().toUpperCase();
-  const subject = `[CourseNotif] ${normalizedSeverity}: ${
+  const subject = `[YorkU Course Availability Notifier] ${normalizedSeverity}: ${
     String(summary || normalizedKey).trim() || "Operational alert"
   }`;
   const lines = [
-    "CourseNotif detected an operational condition that needs attention.",
+    "YorkU Course Availability Notifier detected an operational condition that needs attention.",
     "",
     `Alert: ${normalizedKey}`,
     `Severity: ${normalizedSeverity}`
@@ -245,7 +245,7 @@ async function sendOperationalAlertEmail({
     lines.push(`${key}: ${value}`);
   }
   if (appUrl) {
-    lines.push("", `Open CourseNotif: ${String(appUrl).trim()}`);
+    lines.push("", `Open YorkU Course Availability Notifier: ${String(appUrl).trim()}`);
   }
 
   await sendMail({
@@ -265,9 +265,9 @@ async function sendLoginOtpEmail({ toEmail, otpCode, expiresMinutes = 10 }) {
     ? Math.max(1, Number(expiresMinutes))
     : 10;
 
-  const subject = "Your CourseNotif login code";
+  const subject = "Your YorkU Course Availability Notifier login code";
   const text = [
-    "Use this one-time code to sign in to CourseNotif:",
+    "Use this one-time code to sign in to YorkU Course Availability Notifier:",
     "",
     code,
     "",
@@ -276,7 +276,7 @@ async function sendLoginOtpEmail({ toEmail, otpCode, expiresMinutes = 10 }) {
   ].join("\n");
 
   const html = [
-    "<p>Use this one-time code to sign in to <strong>CourseNotif</strong>:</p>",
+    "<p>Use this one-time code to sign in to <strong>YorkU Course Availability Notifier</strong>:</p>",
     `<p style="font-size: 24px; font-weight: 700; letter-spacing: 2px;"><code>${code}</code></p>`,
     `<p>This code expires in <strong>${ttl} minute(s)</strong>.</p>`,
     "<p>If you did not request this code, you can ignore this email.</p>"

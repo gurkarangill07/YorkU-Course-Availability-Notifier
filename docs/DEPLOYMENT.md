@@ -1,6 +1,6 @@
-# CourseNotif Deployment Checklist
+# YorkU Course Availability Notifier Deployment Checklist
 
-Last updated: March 21, 2026
+Last updated: March 24, 2026
 
 ## Pre-deploy
 

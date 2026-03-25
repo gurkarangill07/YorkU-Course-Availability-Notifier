@@ -1,6 +1,6 @@
-# CourseNotif Operations Runbook
+# YorkU Course Availability Notifier Operations Runbook
 
-Last updated: March 21, 2026
+Last updated: March 24, 2026
 
 ## Scope
 

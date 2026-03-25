@@ -1,6 +1,6 @@
-# CourseNotif Roadmap (Implementation-Aligned)
+# YorkU Course Availability Notifier Roadmap (Implementation-Aligned)
 
-Last updated: March 21, 2026
+Last updated: March 24, 2026
 
 Planning note: keep this file aligned with `README.md` and `context` after major implementation changes.
 

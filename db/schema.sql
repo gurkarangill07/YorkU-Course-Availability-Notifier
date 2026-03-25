@@ -1,4 +1,4 @@
--- CourseNotif database schema (PostgreSQL)
+-- YorkU Course Availability Notifier database schema (PostgreSQL)
 -- Maps:
 -- 1) user email
 -- 2) each user email -> list of entered courses

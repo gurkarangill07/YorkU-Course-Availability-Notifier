@@ -1,6 +1,6 @@
-# CourseNotif Compliance and Policy Controls
+# YorkU Course Availability Notifier Compliance and Policy Controls
 
-Last updated: March 11, 2026
+Last updated: March 24, 2026
 
 ## Scope
 

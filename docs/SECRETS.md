@@ -1,10 +1,10 @@
-# CourseNotif Secrets and Environment Hygiene
+# YorkU Course Availability Notifier Secrets and Environment Hygiene
 
-Last updated: March 21, 2026
+Last updated: March 24, 2026
 
 ## Scope
 
-This document defines how secrets are stored, accessed, and rotated for CourseNotif.
+This document defines how secrets are stored, accessed, and rotated for YorkU Course Availability Notifier.
 
 ## Secret inventory
 

@@ -1,10 +1,10 @@
-# CourseNotif Context (Current Snapshot)
+# YorkU Course Availability Notifier Context (Current Snapshot)
 
-Last updated: March 24, 2026 (tracked-course cap update)
+Last updated: March 24, 2026 (branding update)
 
 ## 1) Project identity
 
-- Project name: CourseNotif
+- Project name: YorkU Course Availability Notifier
 - Current stage: Implemented MVP (active development)
 - Architecture: Node.js app with Express API/UI + worker + PostgreSQL
 - Primary goal: Monitor tracked courses and notify users when seats open (`os > 0`)
