@@ -117,7 +117,7 @@ export MIN_POLL_INTERVAL_SECONDS="30"             # enforces minimum monitor cad
 export MONITOR_EMERGENCY_DISABLE="false"          # true disables loop/once/immediate check modes
 export MONITOR_EMERGENCY_REASON="Monitoring paused for incident response."
 export SESSION_DURATION_MINUTES="90"
-export VSB_REFRESH_INTERVAL_MINUTES="15"
+export VSB_REFRESH_INTERVAL_MINUTES="30"
 export OWNER_ALERT_EMAIL="you@example.com"   # optional owner alert target
 ```
 

@@ -491,7 +491,7 @@ function loadConfig(sourceEnv = process.env) {
     vsbLoginWaitSeconds: parseIntEnv(sourceEnv.VSB_LOGIN_WAIT_SECONDS, 600),
     vsbRefreshIntervalMinutes: parseIntEnv(
       sourceEnv.VSB_REFRESH_INTERVAL_MINUTES,
-      15
+      30
     ),
     notificationRetryBaseSeconds: parseIntEnvMin(
       sourceEnv.NOTIFICATION_RETRY_BASE_SECONDS,
