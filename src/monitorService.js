@@ -1,4 +1,4 @@
-const { parseCourseFromJsp } = require("./jspParser");
+const { parseCourseFromJsp, parseAllCoursesFromJsp } = require("./jspParser");
 const { createLogger } = require("./logger");
 const { metrics } = require("./metrics");
 
@@ -461,7 +461,8 @@ async function processTrackedCourse({
   vsbSource,
   notifier,
   notificationPolicy,
-  forceRefresh = false
+  forceRefresh = false,
+  snapshotContext = null
 }) {
   function toTimestamp(input) {
     if (!input) {
@@ -471,8 +472,157 @@ async function processTrackedCourse({
     return Number.isFinite(ts) ? ts : 0;
   }
 
+  async function enqueueNotificationsForOpenCart({ courseName, os }) {
+    const notificationTargets =
+      typeof db.listActiveTrackedCoursesByCartId === "function"
+        ? await db.listActiveTrackedCoursesByCartId(target.cart_id)
+        : [target];
+    let enqueueResult = null;
+    for (const notificationTarget of notificationTargets) {
+      const result = await db.enqueueCourseOpenNotification({
+        userId: notificationTarget.user_id,
+        userCourseId: notificationTarget.user_course_id,
+        cartId: notificationTarget.cart_id,
+        toEmail: notificationTarget.email,
+        courseName:
+          courseName ||
+          notificationTarget.display_name ||
+          notificationTarget.course_name ||
+          notificationTarget.cart_id,
+        os,
+        maxAttempts: notificationPolicy.maxAttempts,
+        suppressionWindowMinutes: notificationPolicy.suppressionWindowMinutes
+      });
+      metrics.increment(
+        `worker_enqueue_action_${result.action}_total`,
+        1,
+        "Notification enqueue outcomes by action."
+      );
+
+      if (
+        result.action === "suppressed" ||
+        result.action === "already_sent" ||
+        result.action === "already_suppressed"
+      ) {
+        await markUserCourseNotifiedCompat(db, notificationTarget.user_course_id);
+      }
+
+      if (notificationTarget.user_course_id === target.user_course_id) {
+        enqueueResult = result;
+      }
+    }
+    return enqueueResult || { action: "already_queued" };
+  }
+
+  async function enqueueNotificationsForTrackedRows(trackedRows) {
+    for (const trackedRow of trackedRows) {
+      const observedOs = Number.parseInt(trackedRow.last_observed_os, 10) || 0;
+      if (observedOs <= 0) {
+        continue;
+      }
+      const result = await db.enqueueCourseOpenNotification({
+        userId: trackedRow.user_id,
+        userCourseId: trackedRow.user_course_id,
+        cartId: trackedRow.cart_id,
+        toEmail: trackedRow.email,
+        courseName:
+          trackedRow.course_name ||
+          trackedRow.display_name ||
+          trackedRow.cart_id,
+        os: observedOs,
+        maxAttempts: notificationPolicy.maxAttempts,
+        suppressionWindowMinutes: notificationPolicy.suppressionWindowMinutes
+      });
+      metrics.increment(
+        `worker_enqueue_action_${result.action}_total`,
+        1,
+        "Notification enqueue outcomes by action."
+      );
+      if (
+        result.action === "suppressed" ||
+        result.action === "already_sent" ||
+        result.action === "already_suppressed"
+      ) {
+        await markUserCourseNotifiedCompat(db, trackedRow.user_course_id);
+      }
+    }
+  }
+
   let shouldForceRefresh = forceRefresh;
   const requiresFreshScan = isTrueLike(target && target.requires_fresh_scan);
+  const courseUpdatedAtTs = toTimestamp(target && target.course_updated_at);
+  const lastCheckedAtTs = toTimestamp(target && target.last_checked_at);
+  const sharedCourseOs = Number.parseInt(target && target.os, 10);
+  const hasSharedCourseSnapshot =
+    Number.isFinite(sharedCourseOs) &&
+    courseUpdatedAtTs > 0 &&
+    (
+      !lastCheckedAtTs ||
+      lastCheckedAtTs < courseUpdatedAtTs ||
+      Number.parseInt(target && target.last_observed_os, 10) !== sharedCourseOs ||
+      requiresFreshScan
+    );
+
+  if (hasSharedCourseSnapshot && typeof db.syncActiveUserCoursesFromCourseSnapshot === "function") {
+    const checkedAt = new Date();
+    const syncedUserCourseIds = await db.syncActiveUserCoursesFromCourseSnapshot({
+      cartId: target.cart_id,
+      observedOs: sharedCourseOs,
+      checkedAt
+    });
+    monitorLogger.info("reconciled user course observations from existing shared course snapshot", {
+      event: "monitor.course_snapshot.reconciled_user_courses",
+      cartId: target.cart_id,
+      userCourseId: target.user_course_id,
+      syncedUserCourseIds,
+      syncedCount: syncedUserCourseIds.length,
+      observedOs: sharedCourseOs,
+      courseUpdatedAt: target.course_updated_at || null
+    });
+
+    if (sharedCourseOs > 0) {
+      metrics.increment(
+        "worker_open_seat_detected_total",
+        1,
+        "Open-seat detections during monitor scans."
+      );
+      const enqueueResult = await enqueueNotificationsForOpenCart({
+        courseName: target.course_name,
+        os: sharedCourseOs
+      });
+
+      if (enqueueResult.action === "already_failed") {
+        await db.stopTrackingUserCourse(target.user_course_id);
+        return {
+          status: "failed_and_stopped",
+          queueAction: enqueueResult.action,
+          os: sharedCourseOs
+        };
+      }
+
+      if (
+        enqueueResult.action === "suppressed" ||
+        enqueueResult.action === "already_sent" ||
+        enqueueResult.action === "already_suppressed"
+      ) {
+        await markUserCourseNotifiedCompat(db, target.user_course_id);
+        return {
+          status: "suppressed_and_notified",
+          queueAction: enqueueResult.action,
+          os: sharedCourseOs
+        };
+      }
+
+      return {
+        status: "open_enqueued",
+        queueAction: enqueueResult.action,
+        os: sharedCourseOs
+      };
+    }
+
+    return { status: "still_closed", os: sharedCourseOs };
+  }
+
   if (requiresFreshScan) {
     shouldForceRefresh = true;
   }
@@ -502,7 +652,78 @@ async function processTrackedCourse({
     return latestFile;
   }
 
+  async function applyFullSnapshotSyncIfNeeded(latestFile) {
+    const parsedAllCourses = parseAllCoursesFromJsp(latestFile.jspBody);
+    if (parsedAllCourses.length === 0) {
+      return;
+    }
+
+    const snapshotKey =
+      latestFile.payloadHash ||
+      [latestFile.fileName || "", latestFile.generatedAt || ""].join("|");
+
+    if (snapshotContext && snapshotContext.lastAppliedFullSnapshotKey === snapshotKey) {
+      return;
+    }
+
+    if (typeof db.applyParsedCoursesSnapshot === "function") {
+      const snapshotResult = await db.applyParsedCoursesSnapshot({
+        parsedCourses: parsedAllCourses,
+        checkedAt: new Date(),
+        maxAttempts: notificationPolicy.maxAttempts,
+        suppressionWindowMinutes: notificationPolicy.suppressionWindowMinutes
+      });
+      monitorLogger.info("synced active user courses from full JSP snapshot", {
+        event: "monitor.course_snapshot.synced_full_jsp",
+        targetCartId: target.cart_id,
+        parsedCartCount: snapshotResult.parsedCartCount,
+        syncedCount: snapshotResult.syncedRows.length,
+        enqueuedCount: snapshotResult.enqueueResults.filter((entry) =>
+          entry.action === "queued" || entry.action === "requeued"
+        ).length
+      });
+      for (const enqueueResult of snapshotResult.enqueueResults) {
+        metrics.increment(
+          `worker_enqueue_action_${enqueueResult.action}_total`,
+          1,
+          "Notification enqueue outcomes by action."
+        );
+      }
+    } else {
+      for (const parsedCourse of parsedAllCourses) {
+        await db.upsertCourseFromJsp({
+          cartId: parsedCourse.cartId,
+          courseName: parsedCourse.courseName,
+          os: parsedCourse.os
+        });
+      }
+      if (typeof db.syncActiveUserCoursesFromCurrentCourses === "function") {
+        const checkedAt = new Date();
+        const parsedCartIds = parsedAllCourses.map((entry) => entry.cartId);
+        const syncedRows = await db.syncActiveUserCoursesFromCurrentCourses({
+          cartIds: parsedCartIds,
+          checkedAt
+        });
+        monitorLogger.info("synced active user courses from full JSP snapshot", {
+          event: "monitor.course_snapshot.synced_full_jsp",
+          targetCartId: target.cart_id,
+          parsedCartCount: parsedAllCourses.length,
+          syncedCount: syncedRows.length
+        });
+        if (typeof db.listActiveTrackedCoursesByCartIds === "function") {
+          const trackedRows = await db.listActiveTrackedCoursesByCartIds(parsedCartIds);
+          await enqueueNotificationsForTrackedRows(trackedRows);
+        }
+      }
+    }
+
+    if (snapshotContext) {
+      snapshotContext.lastAppliedFullSnapshotKey = snapshotKey;
+    }
+  }
+
   let latestFile = await loadLatestFile({ refreshNow: shouldForceRefresh });
+  await applyFullSnapshotSyncIfNeeded(latestFile);
   let parsed;
   try {
     parsed = parseCourseFromJsp(latestFile.jspBody, target.cart_id);
@@ -531,6 +752,7 @@ async function processTrackedCourse({
       throw error;
     }
     latestFile = await loadLatestFile({ refreshNow: true });
+    await applyFullSnapshotSyncIfNeeded(latestFile);
     try {
       parsed = parseCourseFromJsp(latestFile.jspBody, target.cart_id);
     } catch (retryError) {
@@ -563,10 +785,28 @@ async function processTrackedCourse({
     courseName: parsed.courseName,
     os: parsed.os
   });
-  await recordObservationCompat(db, target.user_course_id, parsed.os);
+  const checkedAt = new Date();
+  if (typeof db.syncActiveUserCoursesFromCourseSnapshot === "function") {
+    const syncedUserCourseIds = await db.syncActiveUserCoursesFromCourseSnapshot({
+      cartId: target.cart_id,
+      observedOs: parsed.os,
+      checkedAt
+    });
+    monitorLogger.info("synced user course observations from shared course snapshot", {
+      event: "monitor.course_snapshot.synced_user_courses",
+      cartId: target.cart_id,
+      userCourseId: target.user_course_id,
+      syncedUserCourseIds,
+      syncedCount: syncedUserCourseIds.length,
+      observedOs: parsed.os
+    });
+  } else {
+    await recordObservationCompat(db, target.user_course_id, parsed.os);
+  }
   await resetInvalidAttemptsCompat(db, target.user_course_id);
   if (
     requiresFreshScan &&
+    typeof db.syncActiveUserCoursesFromCourseSnapshot !== "function" &&
     typeof db.markUserCourseFreshScanCompleted === "function"
   ) {
     await db.markUserCourseFreshScanCompleted(target.user_course_id);
@@ -578,21 +818,10 @@ async function processTrackedCourse({
       1,
       "Open-seat detections during monitor scans."
     );
-    const enqueueResult = await db.enqueueCourseOpenNotification({
-      userId: target.user_id,
-      userCourseId: target.user_course_id,
-      cartId: target.cart_id,
-      toEmail: target.email,
+    const enqueueResult = await enqueueNotificationsForOpenCart({
       courseName: parsed.courseName,
-      os: parsed.os,
-      maxAttempts: notificationPolicy.maxAttempts,
-      suppressionWindowMinutes: notificationPolicy.suppressionWindowMinutes
+      os: parsed.os
     });
-    metrics.increment(
-      `worker_enqueue_action_${enqueueResult.action}_total`,
-      1,
-      "Notification enqueue outcomes by action."
-    );
 
     if (enqueueResult.action === "already_failed") {
       await db.stopTrackingUserCourse(target.user_course_id);
@@ -655,6 +884,9 @@ async function monitorOnce({
     retried: 0,
     dispatchClaimed: 0,
     failures: 0
+  };
+  const snapshotContext = {
+    lastAppliedFullSnapshotKey: null
   };
 
   function applyDispatchSummary(dispatchSummary) {
@@ -815,7 +1047,8 @@ async function monitorOnce({
         vsbSource,
         notifier,
         notificationPolicy: policy,
-        forceRefresh: false
+        forceRefresh: false,
+        snapshotContext
       });
       if (result.status === "open_enqueued") {
         if (result.queueAction === "queued" || result.queueAction === "requeued") {
@@ -852,7 +1085,8 @@ async function monitorOnce({
                 vsbSource,
                 notifier,
                 notificationPolicy: policy,
-                forceRefresh: true
+                forceRefresh: true,
+                snapshotContext
               });
               if (retryResult.status === "open_enqueued") {
                 if (
@@ -945,7 +1179,8 @@ async function runImmediateCheckForNewCourse({
       vsbSource,
       notifier,
       notificationPolicy: policy,
-      forceRefresh: true
+      forceRefresh: true,
+      snapshotContext: { lastAppliedFullSnapshotKey: null }
     });
     if (result.status !== "open_enqueued") {
       return result;
@@ -984,7 +1219,8 @@ async function runImmediateCheckForNewCourse({
               vsbSource,
               notifier,
               notificationPolicy: policy,
-              forceRefresh: true
+              forceRefresh: true,
+              snapshotContext: { lastAppliedFullSnapshotKey: null }
             });
             if (retryResult.status !== "open_enqueued") {
               return retryResult;

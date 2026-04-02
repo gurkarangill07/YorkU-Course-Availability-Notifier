@@ -124,6 +124,7 @@ function createVsbBrowserSource(db, config, dependencies = {}) {
   let page = null;
   let hasSyncedTrackedCoursesForContext = false;
   const coursePresenceCache = new Map();
+  const courseAddFailureCache = new Map();
   const coursePresenceCacheTtlMs = 45 * 60 * 1000;
   const injectedPlaywright = dependencies.playwright || null;
 
@@ -141,6 +142,43 @@ function createVsbBrowserSource(db, config, dependencies = {}) {
       updatedAt: Date.now(),
       source
     });
+  }
+
+  function getCourseAddFailureCache(cartId) {
+    const key = normalizeCartId(cartId);
+    if (!key) {
+      return null;
+    }
+    const cached = courseAddFailureCache.get(key);
+    if (!cached) {
+      return null;
+    }
+    const cooldownMs =
+      Math.max(0, Number(config.vsbSyncAddFailureCooldownSeconds) || 0) * 1000;
+    if (cooldownMs <= 0 || Date.now() - cached.failedAtMs >= cooldownMs) {
+      courseAddFailureCache.delete(key);
+      return null;
+    }
+    return cached;
+  }
+
+  function setCourseAddFailureCache(cartId, reason = "unknown") {
+    const key = normalizeCartId(cartId);
+    if (!key) {
+      return;
+    }
+    courseAddFailureCache.set(key, {
+      failedAtMs: Date.now(),
+      reason: String(reason || "unknown")
+    });
+  }
+
+  function clearCourseAddFailureCache(cartId) {
+    const key = normalizeCartId(cartId);
+    if (!key) {
+      return;
+    }
+    courseAddFailureCache.delete(key);
   }
 
   function getCoursePresenceCache(cartId) {
@@ -310,6 +348,78 @@ function createVsbBrowserSource(db, config, dependencies = {}) {
     if (await isLoggedOutScreenVisible()) {
       throw new Error("login_ui_visible");
     }
+  }
+
+  async function ensurePreferredSessionSelected() {
+    const preferredSession = String(config.vsbSessionPreference || "summer")
+      .trim()
+      .toLowerCase();
+    const allRadios = page.locator(config.vsbFallWinterSelector);
+    const radioCount = await allRadios.count();
+
+    if (radioCount === 0) {
+      logInfo("[vsb] No session radio buttons found.");
+      return;
+    }
+
+    const radioHandles = [];
+    for (let i = 0; i < radioCount; i += 1) {
+      radioHandles.push(allRadios.nth(i));
+    }
+
+    let targetRadio = null;
+    for (const radio of radioHandles) {
+      const id = await radio.getAttribute("id").catch(() => null);
+      const value = await radio.getAttribute("value").catch(() => null);
+      let labelText = "";
+
+      if (id) {
+        const label = page.locator(`label[for='${id}']`).first();
+        labelText = (await label.textContent().catch(() => "")) || "";
+      }
+      if (!labelText) {
+        labelText = (await radio.locator("xpath=ancestor::label[1]").textContent().catch(() => "")) || "";
+      }
+
+      const haystack = `${id || ""} ${value || ""} ${labelText}`.toLowerCase();
+      const matchesSummer = haystack.includes("summer");
+      const matchesFallWinter =
+        haystack.includes("fall") || haystack.includes("winter");
+
+      if (preferredSession === "summer" && matchesSummer) {
+        targetRadio = radio;
+        break;
+      }
+      if (
+        (preferredSession === "fall" || preferredSession === "fall/winter" || preferredSession === "fall_winter") &&
+        matchesFallWinter
+      ) {
+        targetRadio = radio;
+        break;
+      }
+    }
+
+    if (!targetRadio) {
+      // Current York VSB layout places Summer first and Fall/Winter second.
+      targetRadio =
+        preferredSession === "summer"
+          ? radioHandles[0]
+          : radioHandles[Math.min(1, radioHandles.length - 1)];
+    }
+
+    if (preferredSession === "summer") {
+      targetRadio = radioHandles[0];
+    }
+
+    const isAlreadyChecked = await targetRadio.isChecked().catch(() => false);
+    if (isAlreadyChecked) {
+      logInfo(`[vsb] ${preferredSession} term already selected.`);
+      return;
+    }
+
+    await targetRadio.click({ timeout: config.vsbSearchTimeoutMs });
+    await page.waitForTimeout(800);
+    logInfo(`[vsb] ${preferredSession} term selected successfully.`);
   }
 
   async function tryFallbackLoginInFrame(frame) {
@@ -799,6 +909,11 @@ function createVsbBrowserSource(db, config, dependencies = {}) {
               el: globalChecked[0],
               source: "global_unique_checked"
             };
+          } else if (globalChecked.length >= 7) {
+            target = {
+              el: globalChecked[0],
+              source: "global_overflow_fallback_checked"
+            };
           } else {
             return {
               status: "not_found",
@@ -845,6 +960,12 @@ function createVsbBrowserSource(db, config, dependencies = {}) {
     );
 
     if (result.status === "unchecked") {
+      if (result.source === "global_overflow_fallback_checked") {
+        logInfo(
+          `[vsb] Unchecked a fallback checked course while clearing VSB overflow for ${cartIdText}.`
+        );
+        return;
+      }
       logInfo(`[vsb] Unchecked course checkbox for ${cartIdText}.`);
       return;
     }
@@ -1007,8 +1128,15 @@ function createVsbBrowserSource(db, config, dependencies = {}) {
       return;
     }
 
+    // Pick the correct academic session before any tracked-course add/search work.
+    try {
+      await ensurePreferredSessionSelected();
+    } catch (error) {
+      logInfo("[vsb] Warning: Could not select preferred term before tracked-course sync:", error.message);
+    }
+
     const trackedRows = await db.listTrackedCourses();
-    const uniqueCartIds = [];
+    const uniqueTrackedCourses = [];
     const seen = new Set();
     for (const row of trackedRows) {
       const cartId = String(row.cart_id || "").trim();
@@ -1016,39 +1144,70 @@ function createVsbBrowserSource(db, config, dependencies = {}) {
         continue;
       }
       seen.add(cartId);
-      uniqueCartIds.push(cartId);
-      if (uniqueCartIds.length >= config.vsbSyncTrackedCoursesLimit) {
+      uniqueTrackedCourses.push({
+        cartId,
+        requiresFreshScan: Boolean(row.requires_fresh_scan)
+      });
+      if (uniqueTrackedCourses.length >= config.vsbSyncTrackedCoursesLimit) {
         break;
       }
     }
 
-    if (uniqueCartIds.length === 0) {
+    if (uniqueTrackedCourses.length === 0) {
       hasSyncedTrackedCoursesForContext = true;
       return;
     }
 
     let allSynced = true;
-    logInfo(`[vsb] Syncing ${uniqueCartIds.length} tracked course(s) into VSB page...`);
-    for (const cartId of uniqueCartIds) {
+    let attemptedAdds = 0;
+    const maxAddAttemptsPerCycle = Math.max(
+      1,
+      Number(config.vsbSyncMaxAddAttemptsPerCycle) || 6
+    );
+    logInfo(
+      `[vsb] Syncing ${uniqueTrackedCourses.length} tracked course(s) into VSB page...`
+    );
+    for (const trackedCourse of uniqueTrackedCourses) {
+      const cartId = trackedCourse.cartId;
       try {
         const exists = await isCoursePresentInWindow(cartId);
         if (exists) {
+          clearCourseAddFailureCache(cartId);
           setCoursePresenceCache(cartId, true, "sync_precheck_present");
           continue;
         }
+        const recentAddFailure = getCourseAddFailureCache(cartId);
+        if (recentAddFailure && !trackedCourse.requiresFreshScan) {
+          allSynced = false;
+          logInfo(
+            `[vsb] Skipping recent failed add attempt for ${cartId}; cooldown active (${recentAddFailure.reason}).`
+          );
+          continue;
+        }
+        if (attemptedAdds >= maxAddAttemptsPerCycle) {
+          allSynced = false;
+          logInfo(
+            `[vsb] Reached per-cycle add-attempt cap (${maxAddAttemptsPerCycle}); deferring ${cartId}.`
+          );
+          continue;
+        }
+        attemptedAdds += 1;
         logInfo(`[vsb] ${cartId} missing in VSB page; adding...`);
         await searchAndSelectCourse(cartId, { applyUncheck: true });
         await page.waitForTimeout(350);
 
         const existsAfterAdd = await isCoursePresentInWindow(cartId);
         if (!existsAfterAdd) {
+          setCourseAddFailureCache(cartId, "post_add_absent");
           setCoursePresenceCache(cartId, false, "sync_post_add_absent");
           allSynced = false;
           logInfo(`[vsb] ${cartId} still not visible after add attempt; will retry later.`);
         } else {
+          clearCourseAddFailureCache(cartId);
           setCoursePresenceCache(cartId, true, "sync_post_add_present");
         }
       } catch (error) {
+        setCourseAddFailureCache(cartId, "sync_error");
         setCoursePresenceCache(cartId, false, "sync_error");
         allSynced = false;
         logInfo(`[vsb] Warning: failed to sync tracked course ${cartId}: ${error.message}`);
@@ -1083,30 +1242,11 @@ function createVsbBrowserSource(db, config, dependencies = {}) {
 
     await ensureSessionReady();
 
-    // Click on Fall/Winter radio button before adding course
+    // Ensure the preferred session is selected before adding course.
     try {
-      const allRadios = page.locator(config.vsbFallWinterSelector);
-      const radioCount = await allRadios.count();
-      
-      if (radioCount >= 2) {
-        // There are typically 2 radio buttons: Summer (first) and Fall/Winter (second)
-        // Click the Fall/Winter button (index 1, or .last())
-        const fallWinterRadio = allRadios.nth(1);
-        const isAlreadyChecked = await fallWinterRadio.isChecked().catch(() => false);
-        
-        if (!isAlreadyChecked) {
-          logInfo("[vsb] Clicking Fall/Winter 2025-2026 radio button...");
-          await fallWinterRadio.click({ timeout: config.vsbSearchTimeoutMs });
-          await page.waitForTimeout(800);
-          logInfo("[vsb] Fall/Winter term selected successfully.");
-        } else {
-          logInfo("[vsb] Fall/Winter term already selected.");
-        }
-      } else {
-        logInfo("[vsb] Expected 2 session radio buttons, found " + radioCount);
-      }
+      await ensurePreferredSessionSelected();
     } catch (e) {
-      logInfo("[vsb] Warning: Could not select Fall/Winter term:", e.message);
+      logInfo("[vsb] Warning: Could not select preferred term:", e.message);
     }
 
     const cartIdText = String(cartId || "").trim();

@@ -385,12 +385,16 @@ function createDb({ databaseUrl }) {
         uc.last_observed_os,
         uc.requires_fresh_scan,
         c.course_name,
-        c.os
+        c.os,
+        c.updated_at AS course_updated_at
       FROM user_courses uc
       INNER JOIN users u ON u.id = uc.user_id
       LEFT JOIN courses c ON c.cart_id = uc.cart_id
       WHERE uc.tracking_status = 'active'
-      ORDER BY uc.id ASC
+      ORDER BY
+        uc.requires_fresh_scan DESC,
+        uc.created_at DESC,
+        uc.id DESC
       `
     );
     return rows;
@@ -795,6 +799,78 @@ function createDb({ databaseUrl }) {
     return rows;
   }
 
+  async function listActiveTrackedCoursesByCartId(cartId) {
+    const { rows } = await pool.query(
+      `
+      SELECT
+        uc.id AS user_course_id,
+        uc.user_id,
+        uc.created_at,
+        u.email,
+        uc.cart_id,
+        uc.display_name,
+        uc.tracking_status,
+        uc.notified_at,
+        uc.invalid_attempts,
+        uc.invalid_notified_at,
+        uc.last_checked_at,
+        uc.last_observed_os,
+        uc.requires_fresh_scan,
+        c.course_name,
+        c.os,
+        c.updated_at AS course_updated_at
+      FROM user_courses uc
+      INNER JOIN users u ON u.id = uc.user_id
+      LEFT JOIN courses c ON c.cart_id = uc.cart_id
+      WHERE uc.cart_id = $1 AND uc.tracking_status = 'active'
+      ORDER BY uc.id ASC
+      `,
+      [normalizeCartId(cartId)]
+    );
+    return rows;
+  }
+
+  async function listActiveTrackedCoursesByCartIds(cartIds) {
+    const normalizedCartIds = Array.from(
+      new Set(
+        (Array.isArray(cartIds) ? cartIds : [])
+          .map((cartId) => normalizeCartId(cartId))
+          .filter(Boolean)
+      )
+    );
+    if (normalizedCartIds.length === 0) {
+      return [];
+    }
+    const { rows } = await pool.query(
+      `
+      SELECT
+        uc.id AS user_course_id,
+        uc.user_id,
+        uc.created_at,
+        u.email,
+        uc.cart_id,
+        uc.display_name,
+        uc.tracking_status,
+        uc.notified_at,
+        uc.invalid_attempts,
+        uc.invalid_notified_at,
+        uc.last_checked_at,
+        uc.last_observed_os,
+        uc.requires_fresh_scan,
+        c.course_name,
+        c.os,
+        c.updated_at AS course_updated_at
+      FROM user_courses uc
+      INNER JOIN users u ON u.id = uc.user_id
+      LEFT JOIN courses c ON c.cart_id = uc.cart_id
+      WHERE uc.cart_id = ANY($1::text[]) AND uc.tracking_status = 'active'
+      ORDER BY uc.id ASC
+      `,
+      [normalizedCartIds]
+    );
+    return rows;
+  }
+
   async function stopTrackingUserCourse(userCourseId) {
     await pool.query(
       `
@@ -929,6 +1005,29 @@ function createDb({ databaseUrl }) {
     return rowCount;
   }
 
+  async function syncActiveUserCoursesFromCourseSnapshot({
+    cartId,
+    observedOs,
+    checkedAt = new Date()
+  }) {
+    const normalizedCartId = normalizeCartId(cartId);
+    const safeOs = Math.max(0, Number.parseInt(observedOs, 10) || 0);
+    const { rows } = await pool.query(
+      `
+      UPDATE user_courses
+      SET
+        last_checked_at = $2,
+        last_observed_os = $3,
+        requires_fresh_scan = FALSE,
+        updated_at = NOW()
+      WHERE cart_id = $1 AND tracking_status = 'active'
+      RETURNING id
+      `,
+      [normalizedCartId, checkedAt, safeOs]
+    );
+    return rows.map((row) => Number(row.id));
+  }
+
   async function resetNotificationStateForUserCourse(userCourseId) {
     await pool.query(
       `
@@ -1037,6 +1136,43 @@ function createDb({ databaseUrl }) {
     );
   }
 
+  async function syncActiveUserCoursesFromCurrentCourses({
+    cartIds,
+    checkedAt = new Date()
+  }) {
+    const normalizedCartIds = Array.from(
+      new Set(
+        (Array.isArray(cartIds) ? cartIds : [])
+          .map((cartId) => normalizeCartId(cartId))
+          .filter(Boolean)
+      )
+    );
+    if (normalizedCartIds.length === 0) {
+      return [];
+    }
+    const { rows } = await pool.query(
+      `
+      UPDATE user_courses uc
+      SET
+        last_checked_at = $2,
+        last_observed_os = c.os,
+        requires_fresh_scan = FALSE,
+        updated_at = NOW()
+      FROM courses c
+      WHERE uc.cart_id = c.cart_id
+        AND uc.cart_id = ANY($1::text[])
+        AND uc.tracking_status = 'active'
+      RETURNING uc.id, uc.cart_id, uc.last_observed_os
+      `,
+      [normalizedCartIds, checkedAt]
+    );
+    return rows.map((row) => ({
+      userCourseId: Number(row.id),
+      cartId: row.cart_id,
+      observedOs: Number(row.last_observed_os) || 0
+    }));
+  }
+
   async function ensureCourseExists(cartId, courseName = null) {
     const normalizedName =
       typeof courseName === "string" && courseName.trim()
@@ -1063,6 +1199,486 @@ function createDb({ databaseUrl }) {
       `,
       [cartId, normalizedName]
     );
+  }
+
+  async function markUserCourseNotifiedWithClient(client, userCourseId) {
+    const { rowCount } = await client.query(
+      `
+      UPDATE user_courses
+      SET
+          tracking_status = 'notified',
+          notified_at = NOW(),
+          invalid_attempts = 0,
+          invalid_notified_at = NULL,
+          requires_fresh_scan = FALSE,
+          updated_at = NOW()
+      WHERE id = $1
+      `,
+      [userCourseId]
+    );
+    return rowCount;
+  }
+
+  async function enqueueCourseOpenNotificationWithClient(client, {
+    userId,
+    userCourseId,
+    cartId,
+    toEmail,
+    courseName,
+    os,
+    maxAttempts = 5,
+    suppressionWindowMinutes = 30
+  }) {
+    const normalizedCartId = normalizeCartId(cartId);
+    const normalizedToEmail = normalizeEmail(toEmail);
+    const safeMaxAttempts = parsePositiveInt(maxAttempts, 5);
+    const safeSuppressionMinutes = Math.max(
+      0,
+      Number.parseInt(suppressionWindowMinutes, 10) || 0
+    );
+    const idempotencyKey = `course_open:${userCourseId}`;
+    const suppressionKey = `course_open:${normalizedToEmail}:${normalizedCartId}`;
+    const payload = {
+      cartId: normalizedCartId,
+      courseName:
+        typeof courseName === "string" && courseName.trim()
+          ? courseName.trim()
+          : normalizedCartId,
+      os: Number.isFinite(Number(os)) ? Number(os) : 0
+    };
+
+    const payloadJson = JSON.stringify(payload);
+
+    if (safeSuppressionMinutes > 0) {
+      const suppressionCutoff = new Date(
+        Date.now() - safeSuppressionMinutes * 60 * 1000
+      );
+      const { rows: recentSentRows } = await client.query(
+        `
+        SELECT id, sent_at
+        FROM notification_attempts
+        WHERE event_type = 'course_open'
+          AND suppression_key = $1
+          AND status = 'sent'
+          AND sent_at IS NOT NULL
+          AND sent_at >= $2
+        ORDER BY sent_at DESC
+        LIMIT 1
+        `,
+        [suppressionKey, suppressionCutoff]
+      );
+
+      if (recentSentRows[0]) {
+        const recentSent = recentSentRows[0];
+        const suppressedUntil = new Date(
+          new Date(recentSent.sent_at).getTime() + safeSuppressionMinutes * 60 * 1000
+        );
+        const suppressedIdempotencyKey = `${idempotencyKey}:suppressed:${Date.now()}:${Math.random().toString(16).slice(2, 10)}`;
+        const { rows: suppressedRows } = await client.query(
+          `
+          INSERT INTO notification_attempts (
+            event_type,
+            idempotency_key,
+            suppression_key,
+            user_id,
+            user_course_id,
+            cart_id,
+            to_email,
+            payload_json,
+            status,
+            attempt_count,
+            max_attempts,
+            next_retry_at,
+            sent_at,
+            suppressed_until,
+            last_error,
+            created_at,
+            updated_at
+          )
+          VALUES (
+            'course_open',
+            $1,
+            $2,
+            $3,
+            $4,
+            $5,
+            $6,
+            $7::jsonb,
+            'suppressed',
+            0,
+            $8,
+            NULL,
+            NULL,
+            $9,
+            $10,
+            NOW(),
+            NOW()
+          )
+          RETURNING *
+          `,
+          [
+            suppressedIdempotencyKey,
+            suppressionKey,
+            userId || null,
+            userCourseId || null,
+            normalizedCartId,
+            normalizedToEmail,
+            payloadJson,
+            safeMaxAttempts,
+            suppressedUntil,
+            `suppressed by sent attempt id=${recentSent.id}`
+          ]
+        );
+
+        return {
+          action: "suppressed",
+          attempt: mapNotificationAttemptRow(suppressedRows[0]),
+          suppressionSourceAttemptId: Number(recentSent.id)
+        };
+      }
+    }
+
+    const { rows: existingRows } = await client.query(
+      `
+      SELECT *
+      FROM notification_attempts
+      WHERE idempotency_key = $1
+      FOR UPDATE
+      LIMIT 1
+      `,
+      [idempotencyKey]
+    );
+    const existing = mapNotificationAttemptRow(existingRows[0]);
+    if (existing) {
+      if (existing.status === "sent") {
+        return { action: "already_sent", attempt: existing };
+      }
+
+      if (existing.status === "pending" || existing.status === "retrying") {
+        return { action: "already_queued", attempt: existing };
+      }
+
+      if (existing.status === "failed") {
+        return { action: "already_failed", attempt: existing };
+      }
+
+      if (existing.status === "suppressed") {
+        return { action: "already_suppressed", attempt: existing };
+      }
+
+      const { rows: resetRows } = await client.query(
+        `
+        UPDATE notification_attempts
+        SET
+          suppression_key = $2,
+          user_id = $3,
+          user_course_id = $4,
+          cart_id = $5,
+          to_email = $6,
+          payload_json = $7::jsonb,
+          status = 'pending',
+          attempt_count = 0,
+          max_attempts = $8,
+          next_retry_at = NOW(),
+          last_attempted_at = NULL,
+          sent_at = NULL,
+          suppressed_until = NULL,
+          provider_message_id = NULL,
+          last_error = NULL,
+          updated_at = NOW()
+        WHERE id = $1
+        RETURNING *
+        `,
+        [
+          existing.id,
+          suppressionKey,
+          userId || null,
+          userCourseId || null,
+          normalizedCartId,
+          normalizedToEmail,
+          payloadJson,
+          safeMaxAttempts
+        ]
+      );
+
+      return { action: "requeued", attempt: mapNotificationAttemptRow(resetRows[0]) };
+    }
+
+    const { rows: insertedRows } = await client.query(
+      `
+      INSERT INTO notification_attempts (
+        event_type,
+        idempotency_key,
+        suppression_key,
+        user_id,
+        user_course_id,
+        cart_id,
+        to_email,
+        payload_json,
+        status,
+        attempt_count,
+        max_attempts,
+        next_retry_at,
+        created_at,
+        updated_at
+      )
+      VALUES (
+        'course_open',
+        $1,
+        $2,
+        $3,
+        $4,
+        $5,
+        $6,
+        $7::jsonb,
+        'pending',
+        0,
+        $8,
+        NOW(),
+        NOW(),
+        NOW()
+      )
+      ON CONFLICT (idempotency_key) DO NOTHING
+      RETURNING *
+      `,
+      [
+        idempotencyKey,
+        suppressionKey,
+        userId || null,
+        userCourseId || null,
+        normalizedCartId,
+        normalizedToEmail,
+        payloadJson,
+        safeMaxAttempts
+      ]
+    );
+
+    if (insertedRows[0]) {
+      return { action: "queued", attempt: mapNotificationAttemptRow(insertedRows[0]) };
+    }
+
+    const { rows: conflictedRows } = await client.query(
+      `
+      SELECT *
+      FROM notification_attempts
+      WHERE idempotency_key = $1
+      FOR UPDATE
+      LIMIT 1
+      `,
+      [idempotencyKey]
+    );
+    const conflicted = mapNotificationAttemptRow(conflictedRows[0]);
+    if (!conflicted) {
+      throw new Error("Failed to resolve notification idempotency conflict.");
+    }
+    if (conflicted.status === "sent") {
+      return { action: "already_sent", attempt: conflicted };
+    }
+    if (conflicted.status === "pending" || conflicted.status === "retrying") {
+      return { action: "already_queued", attempt: conflicted };
+    }
+    if (conflicted.status === "failed") {
+      return { action: "already_failed", attempt: conflicted };
+    }
+    if (conflicted.status === "suppressed") {
+      return { action: "already_suppressed", attempt: conflicted };
+    }
+
+    const { rows: resetRows } = await client.query(
+      `
+      UPDATE notification_attempts
+      SET
+        suppression_key = $2,
+        user_id = $3,
+        user_course_id = $4,
+        cart_id = $5,
+        to_email = $6,
+        payload_json = $7::jsonb,
+        status = 'pending',
+        attempt_count = 0,
+        max_attempts = $8,
+        next_retry_at = NOW(),
+        last_attempted_at = NULL,
+        sent_at = NULL,
+        suppressed_until = NULL,
+        provider_message_id = NULL,
+        last_error = NULL,
+        updated_at = NOW()
+      WHERE id = $1
+      RETURNING *
+      `,
+      [
+        conflicted.id,
+        suppressionKey,
+        userId || null,
+        userCourseId || null,
+        normalizedCartId,
+        normalizedToEmail,
+        payloadJson,
+        safeMaxAttempts
+      ]
+    );
+    return { action: "requeued", attempt: mapNotificationAttemptRow(resetRows[0]) };
+  }
+
+  async function applyParsedCoursesSnapshot({
+    parsedCourses,
+    checkedAt = new Date(),
+    maxAttempts = 5,
+    suppressionWindowMinutes = 30
+  }) {
+    const normalizedParsedCourses = Array.from(
+      new Map(
+        (Array.isArray(parsedCourses) ? parsedCourses : [])
+          .map((entry) => ({
+            cartId: normalizeCartId(entry && entry.cartId),
+            courseName:
+              typeof (entry && entry.courseName) === "string" &&
+              entry.courseName.trim()
+                ? entry.courseName.trim()
+                : normalizeCartId(entry && entry.cartId),
+            os: Math.max(0, Number.parseInt(entry && entry.os, 10) || 0)
+          }))
+          .filter((entry) => entry.cartId)
+          .map((entry) => [entry.cartId, entry])
+      ).values()
+    );
+
+    if (normalizedParsedCourses.length === 0) {
+      return {
+        parsedCartCount: 0,
+        syncedRows: [],
+        enqueueResults: []
+      };
+    }
+
+    const client = await pool.connect();
+    try {
+      await client.query("BEGIN");
+
+      for (const parsedCourse of normalizedParsedCourses) {
+        await client.query(
+          `
+          INSERT INTO courses (
+            cart_id,
+            course_name,
+            os,
+            created_at,
+            updated_at
+          )
+          VALUES ($1, $2, $3, NOW(), NOW())
+          ON CONFLICT (cart_id) DO UPDATE
+          SET
+            course_name = CASE
+              WHEN EXCLUDED.course_name IS NULL OR TRIM(EXCLUDED.course_name) = ''
+              THEN courses.course_name
+              ELSE EXCLUDED.course_name
+            END,
+            os = EXCLUDED.os,
+            updated_at = NOW()
+          `,
+          [parsedCourse.cartId, parsedCourse.courseName, parsedCourse.os]
+        );
+      }
+
+      const normalizedCartIds = normalizedParsedCourses.map((entry) => entry.cartId);
+      const { rows: syncedRows } = await client.query(
+        `
+        UPDATE user_courses uc
+        SET
+          last_checked_at = $2,
+          last_observed_os = c.os,
+          requires_fresh_scan = FALSE,
+          updated_at = NOW()
+        FROM courses c
+        WHERE uc.cart_id = c.cart_id
+          AND uc.cart_id = ANY($1::text[])
+          AND uc.tracking_status = 'active'
+        RETURNING uc.id AS user_course_id, uc.user_id, uc.cart_id, uc.display_name,
+                  uc.last_observed_os, c.course_name
+        `,
+        [normalizedCartIds, checkedAt]
+      );
+
+      let trackedRows = [];
+      if (syncedRows.length > 0) {
+        const syncedUserCourseIds = syncedRows.map((row) => Number(row.user_course_id));
+        const trackedResult = await client.query(
+          `
+          SELECT
+            uc.id AS user_course_id,
+            uc.user_id,
+            u.email,
+            uc.cart_id,
+            uc.display_name,
+            uc.last_observed_os,
+            c.course_name
+          FROM user_courses uc
+          INNER JOIN users u ON u.id = uc.user_id
+          LEFT JOIN courses c ON c.cart_id = uc.cart_id
+          WHERE uc.id = ANY($1::int[])
+          ORDER BY uc.id ASC
+          `,
+          [syncedUserCourseIds]
+        );
+        trackedRows = trackedResult.rows;
+      }
+
+      const enqueueResults = [];
+      for (const trackedRow of trackedRows) {
+        const observedOs = Math.max(0, Number.parseInt(trackedRow.last_observed_os, 10) || 0);
+        if (observedOs <= 0) {
+          continue;
+        }
+        const result = await enqueueCourseOpenNotificationWithClient(client, {
+          userId: trackedRow.user_id,
+          userCourseId: trackedRow.user_course_id,
+          cartId: trackedRow.cart_id,
+          toEmail: trackedRow.email,
+          courseName:
+            trackedRow.course_name ||
+            trackedRow.display_name ||
+            trackedRow.cart_id,
+          os: observedOs,
+          maxAttempts,
+          suppressionWindowMinutes
+        });
+        enqueueResults.push({
+          userCourseId: Number(trackedRow.user_course_id),
+          cartId: trackedRow.cart_id,
+          action: result.action,
+          os: observedOs
+        });
+
+        if (
+          result.action === "suppressed" ||
+          result.action === "already_sent" ||
+          result.action === "already_suppressed"
+        ) {
+          await markUserCourseNotifiedWithClient(client, trackedRow.user_course_id);
+        }
+      }
+
+      await client.query("COMMIT");
+      return {
+        parsedCartCount: normalizedParsedCourses.length,
+        syncedRows: trackedRows.map((row) => ({
+          userCourseId: Number(row.user_course_id),
+          cartId: row.cart_id,
+          observedOs: Math.max(0, Number.parseInt(row.last_observed_os, 10) || 0)
+        })),
+        enqueueResults
+      };
+    } catch (error) {
+      try {
+        await client.query("ROLLBACK");
+      } catch (_) {
+        // Ignore rollback errors and rethrow the original failure.
+      }
+      throw error;
+    } finally {
+      client.release();
+    }
   }
 
   async function setUserCourseDisplayName({ userId, cartId, displayName }) {
@@ -1112,312 +1728,21 @@ function createDb({ databaseUrl }) {
     maxAttempts = 5,
     suppressionWindowMinutes = 30
   }) {
-    const normalizedCartId = normalizeCartId(cartId);
-    const normalizedToEmail = normalizeEmail(toEmail);
-    const safeMaxAttempts = parsePositiveInt(maxAttempts, 5);
-    const safeSuppressionMinutes = Math.max(
-      0,
-      Number.parseInt(suppressionWindowMinutes, 10) || 0
-    );
-    const idempotencyKey = `course_open:${userCourseId}`;
-    const suppressionKey = `course_open:${normalizedToEmail}:${normalizedCartId}`;
-    const payload = {
-      cartId: normalizedCartId,
-      courseName:
-        typeof courseName === "string" && courseName.trim()
-          ? courseName.trim()
-          : normalizedCartId,
-      os: Number.isFinite(Number(os)) ? Number(os) : 0
-    };
-
-    const payloadJson = JSON.stringify(payload);
     const client = await pool.connect();
     try {
       await client.query("BEGIN");
-
-      if (safeSuppressionMinutes > 0) {
-        const suppressionCutoff = new Date(
-          Date.now() - safeSuppressionMinutes * 60 * 1000
-        );
-        const { rows: recentSentRows } = await client.query(
-          `
-          SELECT id, sent_at
-          FROM notification_attempts
-          WHERE event_type = 'course_open'
-            AND suppression_key = $1
-            AND status = 'sent'
-            AND sent_at IS NOT NULL
-            AND sent_at >= $2
-          ORDER BY sent_at DESC
-          LIMIT 1
-          `,
-          [suppressionKey, suppressionCutoff]
-        );
-
-        if (recentSentRows[0]) {
-          const recentSent = recentSentRows[0];
-          const suppressedUntil = new Date(
-            new Date(recentSent.sent_at).getTime() + safeSuppressionMinutes * 60 * 1000
-          );
-          const suppressedIdempotencyKey = `${idempotencyKey}:suppressed:${Date.now()}:${Math.random().toString(16).slice(2, 10)}`;
-          const { rows: suppressedRows } = await client.query(
-            `
-            INSERT INTO notification_attempts (
-              event_type,
-              idempotency_key,
-              suppression_key,
-              user_id,
-              user_course_id,
-              cart_id,
-              to_email,
-              payload_json,
-              status,
-              attempt_count,
-              max_attempts,
-              next_retry_at,
-              sent_at,
-              suppressed_until,
-              last_error,
-              created_at,
-              updated_at
-            )
-            VALUES (
-              'course_open',
-              $1,
-              $2,
-              $3,
-              $4,
-              $5,
-              $6,
-              $7::jsonb,
-              'suppressed',
-              0,
-              $8,
-              NULL,
-              NULL,
-              $9,
-              $10,
-              NOW(),
-              NOW()
-            )
-            RETURNING *
-            `,
-            [
-              suppressedIdempotencyKey,
-              suppressionKey,
-              userId || null,
-              userCourseId || null,
-              normalizedCartId,
-              normalizedToEmail,
-              payloadJson,
-              safeMaxAttempts,
-              suppressedUntil,
-              `suppressed by sent attempt id=${recentSent.id}`
-            ]
-          );
-
-          await client.query("COMMIT");
-          return {
-            action: "suppressed",
-            attempt: mapNotificationAttemptRow(suppressedRows[0]),
-            suppressionSourceAttemptId: Number(recentSent.id)
-          };
-        }
-      }
-
-      const { rows: existingRows } = await client.query(
-        `
-        SELECT *
-        FROM notification_attempts
-        WHERE idempotency_key = $1
-        FOR UPDATE
-        LIMIT 1
-        `,
-        [idempotencyKey]
-      );
-      const existing = mapNotificationAttemptRow(existingRows[0]);
-      if (existing) {
-        if (existing.status === "sent") {
-          await client.query("COMMIT");
-          return { action: "already_sent", attempt: existing };
-        }
-
-        if (existing.status === "pending" || existing.status === "retrying") {
-          await client.query("COMMIT");
-          return { action: "already_queued", attempt: existing };
-        }
-
-        if (existing.status === "failed") {
-          await client.query("COMMIT");
-          return { action: "already_failed", attempt: existing };
-        }
-
-        if (existing.status === "suppressed") {
-          await client.query("COMMIT");
-          return { action: "already_suppressed", attempt: existing };
-        }
-
-        const { rows: resetRows } = await client.query(
-          `
-          UPDATE notification_attempts
-          SET
-            suppression_key = $2,
-            user_id = $3,
-            user_course_id = $4,
-            cart_id = $5,
-            to_email = $6,
-            payload_json = $7::jsonb,
-            status = 'pending',
-            attempt_count = 0,
-            max_attempts = $8,
-            next_retry_at = NOW(),
-            last_attempted_at = NULL,
-            sent_at = NULL,
-            suppressed_until = NULL,
-            provider_message_id = NULL,
-            last_error = NULL,
-            updated_at = NOW()
-          WHERE id = $1
-          RETURNING *
-          `,
-          [
-            existing.id,
-            suppressionKey,
-            userId || null,
-            userCourseId || null,
-            normalizedCartId,
-            normalizedToEmail,
-            payloadJson,
-            safeMaxAttempts
-          ]
-        );
-
-        await client.query("COMMIT");
-        return { action: "requeued", attempt: mapNotificationAttemptRow(resetRows[0]) };
-      }
-
-      const { rows: insertedRows } = await client.query(
-        `
-        INSERT INTO notification_attempts (
-          event_type,
-          idempotency_key,
-          suppression_key,
-          user_id,
-          user_course_id,
-          cart_id,
-          to_email,
-          payload_json,
-          status,
-          attempt_count,
-          max_attempts,
-          next_retry_at,
-          created_at,
-          updated_at
-        )
-        VALUES (
-          'course_open',
-          $1,
-          $2,
-          $3,
-          $4,
-          $5,
-          $6,
-          $7::jsonb,
-          'pending',
-          0,
-          $8,
-          NOW(),
-          NOW(),
-          NOW()
-        )
-        ON CONFLICT (idempotency_key) DO NOTHING
-        RETURNING *
-        `,
-        [
-          idempotencyKey,
-          suppressionKey,
-          userId || null,
-          userCourseId || null,
-          normalizedCartId,
-          normalizedToEmail,
-          payloadJson,
-          safeMaxAttempts
-        ]
-      );
-
-      if (insertedRows[0]) {
-        await client.query("COMMIT");
-        return { action: "queued", attempt: mapNotificationAttemptRow(insertedRows[0]) };
-      }
-
-      // Another worker inserted this idempotency key in parallel.
-      const { rows: conflictedRows } = await client.query(
-        `
-        SELECT *
-        FROM notification_attempts
-        WHERE idempotency_key = $1
-        FOR UPDATE
-        LIMIT 1
-        `,
-        [idempotencyKey]
-      );
-      const conflicted = mapNotificationAttemptRow(conflictedRows[0]);
-      if (!conflicted) {
-        throw new Error("Failed to resolve notification idempotency conflict.");
-      }
-      if (conflicted.status === "sent") {
-        await client.query("COMMIT");
-        return { action: "already_sent", attempt: conflicted };
-      }
-      if (conflicted.status === "pending" || conflicted.status === "retrying") {
-        await client.query("COMMIT");
-        return { action: "already_queued", attempt: conflicted };
-      }
-      if (conflicted.status === "failed") {
-        await client.query("COMMIT");
-        return { action: "already_failed", attempt: conflicted };
-      }
-      if (conflicted.status === "suppressed") {
-        await client.query("COMMIT");
-        return { action: "already_suppressed", attempt: conflicted };
-      }
-
-      const { rows: resetRows } = await client.query(
-        `
-        UPDATE notification_attempts
-        SET
-          suppression_key = $2,
-          user_id = $3,
-          user_course_id = $4,
-          cart_id = $5,
-          to_email = $6,
-          payload_json = $7::jsonb,
-          status = 'pending',
-          attempt_count = 0,
-          max_attempts = $8,
-          next_retry_at = NOW(),
-          last_attempted_at = NULL,
-          sent_at = NULL,
-          suppressed_until = NULL,
-          provider_message_id = NULL,
-          last_error = NULL,
-          updated_at = NOW()
-        WHERE id = $1
-        RETURNING *
-        `,
-        [
-          conflicted.id,
-          suppressionKey,
-          userId || null,
-          userCourseId || null,
-          normalizedCartId,
-          normalizedToEmail,
-          payloadJson,
-          safeMaxAttempts
-        ]
-      );
+      const result = await enqueueCourseOpenNotificationWithClient(client, {
+        userId,
+        userCourseId,
+        cartId,
+        toEmail,
+        courseName,
+        os,
+        maxAttempts,
+        suppressionWindowMinutes
+      });
       await client.query("COMMIT");
-      return { action: "requeued", attempt: mapNotificationAttemptRow(resetRows[0]) };
+      return result;
     } catch (error) {
       try {
         await client.query("ROLLBACK");
@@ -1780,6 +2105,8 @@ function createDb({ databaseUrl }) {
     getOrCreateUserByEmail,
     listTrackedCourses,
     listTrackedCoursesByUser,
+    listActiveTrackedCoursesByCartId,
+    listActiveTrackedCoursesByCartIds,
     getTrackedCourseByUserAndCart,
     stopTrackingUserCourse,
     stopTrackingUserCourseForUser,
@@ -1790,6 +2117,9 @@ function createDb({ databaseUrl }) {
     resetUserCourseInvalidAttempts,
     markUserCourseFreshScanCompleted,
     recordUserCourseObservation,
+    syncActiveUserCoursesFromCourseSnapshot,
+    syncActiveUserCoursesFromCurrentCourses,
+    applyParsedCoursesSnapshot,
     resetNotificationStateForUserCourse,
     resumeUserCourseForUser,
     ensureCourseExists,

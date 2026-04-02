@@ -171,6 +171,8 @@ function validateRuntimeConfig({ env = process.env, runtime, mode } = {}) {
   validateIntEnv("VSB_REFRESH_INTERVAL_MINUTES", env, { min: 1 }, errors);
   validateIntEnv("VSB_CHECKBOX_TIMEOUT_MS", env, { min: 1 }, errors);
   validateIntEnv("VSB_SYNC_TRACKED_COURSES_LIMIT", env, { min: 1 }, errors);
+  validateIntEnv("VSB_SYNC_MAX_ADD_ATTEMPTS_PER_CYCLE", env, { min: 1 }, errors);
+  validateIntEnv("VSB_SYNC_ADD_FAILURE_COOLDOWN_SECONDS", env, { min: 0 }, errors);
   validateIntEnv("VSB_POST_LOGIN_WAIT_MS", env, { min: 0 }, errors);
   validateIntEnv("VSB_SEARCH_TIMEOUT_MS", env, { min: 1 }, errors);
   validateIntEnv("VSB_DROPDOWN_TIMEOUT_MS", env, { min: 1 }, errors);
@@ -452,6 +454,8 @@ function loadConfig(sourceEnv = process.env) {
     vsbFallWinterSelector:
       sourceEnv.VSB_FALL_WINTER_SELECTOR ||
       "input[type='radio']",
+    vsbSessionPreference:
+      (sourceEnv.VSB_SESSION_PREFERENCE || "summer").trim().toLowerCase(),
     vsbDropdownOptionSelector:
       sourceEnv.VSB_DROPDOWN_OPTION_SELECTOR ||
       "[role='option'], .dropdown-item, .ui-menu-item, li",
@@ -472,6 +476,14 @@ function loadConfig(sourceEnv = process.env) {
     vsbSyncTrackedCoursesLimit: parseIntEnv(
       sourceEnv.VSB_SYNC_TRACKED_COURSES_LIMIT,
       50
+    ),
+    vsbSyncMaxAddAttemptsPerCycle: parseIntEnv(
+      sourceEnv.VSB_SYNC_MAX_ADD_ATTEMPTS_PER_CYCLE,
+      6
+    ),
+    vsbSyncAddFailureCooldownSeconds: parseIntEnv(
+      sourceEnv.VSB_SYNC_ADD_FAILURE_COOLDOWN_SECONDS,
+      180
     ),
     vsbLoggedOutSelector:
       sourceEnv.VSB_LOGGED_OUT_SELECTOR ||

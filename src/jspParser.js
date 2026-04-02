@@ -231,6 +231,49 @@ function parseCourseFromJsp(jspBody, cartId) {
   throw new Error(`Could not locate cartid ${cartId} with os in getClassData.jsp payload.`);
 }
 
+function parseAllCoursesFromXmlLike(rawBody) {
+  const results = new Map();
+  const tagRegex = /<[A-Za-z][^>]*\bcartid\s*=\s*["']([^"']+)["'][^>]*>/gi;
+  let match;
+  while ((match = tagRegex.exec(rawBody)) !== null) {
+    const cartId = String(match[1] || "").trim();
+    if (!cartId) {
+      continue;
+    }
+    const attrs = parseTagAttributes(match[0]);
+    const osValue = attrs.os ?? attrs.openSeats ?? attrs.open_seats;
+    const os = parseNumber(osValue);
+    if (os === null) {
+      continue;
+    }
+    const nearestParentCode = findNearestParentCode(rawBody, match.index);
+    const courseName =
+      attrs.code ||
+      nearestParentCode ||
+      attrs.courseName ||
+      attrs.course_name ||
+      attrs.key ||
+      attrs.name ||
+      attrs.disp ||
+      cartId;
+    results.set(cartId, {
+      cartId,
+      os,
+      courseName: String(courseName).trim() || cartId
+    });
+  }
+  return Array.from(results.values());
+}
+
+function parseAllCoursesFromJsp(jspBody) {
+  const raw = String(jspBody || "");
+  if (!raw.trim()) {
+    return [];
+  }
+  return parseAllCoursesFromXmlLike(raw);
+}
+
 module.exports = {
-  parseCourseFromJsp
+  parseCourseFromJsp,
+  parseAllCoursesFromJsp
 };
