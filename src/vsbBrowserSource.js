@@ -122,6 +122,7 @@ function escapeRegExp(value) {
 function createVsbBrowserSource(db, config, dependencies = {}) {
   let context = null;
   let page = null;
+  let lastAutoReloginAttemptAtMs = 0;
   let hasSyncedTrackedCoursesForContext = false;
   const coursePresenceCache = new Map();
   const courseAddFailureCache = new Map();
@@ -254,6 +255,14 @@ function createVsbBrowserSource(db, config, dependencies = {}) {
       message.includes("browser has disconnected") ||
       message.includes("context closed")
     );
+  }
+
+  async function waitActionDelay(multiplier = 1) {
+    const delayMs = Math.max(0, Number(config.vsbActionDelayMs) || 0) * multiplier;
+    if (delayMs <= 0) {
+      return;
+    }
+    await new Promise((resolve) => setTimeout(resolve, delayMs));
   }
 
   async function resetBrowserState() {
@@ -529,8 +538,23 @@ function createVsbBrowserSource(db, config, dependencies = {}) {
       };
     }
 
+    const reloginCooldownMs =
+      Math.max(0, Number(config.vsbReloginCooldownSeconds) || 0) * 1000;
+    if (
+      reloginCooldownMs > 0 &&
+      lastAutoReloginAttemptAtMs > 0 &&
+      Date.now() - lastAutoReloginAttemptAtMs < reloginCooldownMs
+    ) {
+      return {
+        ok: false,
+        reason: "auto re-login cooldown active"
+      };
+    }
+    lastAutoReloginAttemptAtMs = Date.now();
+
     await ensureBrowser();
     await page.goto(config.vsbUrl, { waitUntil: "domcontentloaded" });
+    await waitActionDelay();
 
     // If session cookies are still valid, search field may already be visible.
     try {
@@ -637,7 +661,9 @@ function createVsbBrowserSource(db, config, dependencies = {}) {
     }
 
     await usernameInput.fill(String(config.vsbLoginUsername));
+    await waitActionDelay();
     await passwordInput.fill(String(config.vsbLoginPassword));
+    await waitActionDelay();
 
     const submit = page.locator(config.vsbLoginSubmitSelector).first();
     const submitCount = await submit.count().catch(() => 0);
@@ -652,6 +678,7 @@ function createVsbBrowserSource(db, config, dependencies = {}) {
     }
 
     await page.waitForTimeout(config.vsbPostLoginWaitMs);
+    await waitActionDelay();
 
     try {
       await waitForSearchField();
@@ -1002,8 +1029,9 @@ function createVsbBrowserSource(db, config, dependencies = {}) {
     
     await searchInput.click({ timeout: config.vsbSearchTimeoutMs });
     await searchInput.fill("");
+    await waitActionDelay();
     await searchInput.fill(cartIdText);
-    await page.waitForTimeout(500);
+    await page.waitForTimeout(Math.max(500, Number(config.vsbActionDelayMs) || 0));
 
     logInfo(`[vsb] Course code entered. Waiting for dropdown...`);
     
@@ -1027,7 +1055,7 @@ function createVsbBrowserSource(db, config, dependencies = {}) {
     }
 
     if (applyUncheck) {
-      await page.waitForTimeout(600);
+      await page.waitForTimeout(Math.max(600, Number(config.vsbActionDelayMs) || 0));
       try {
         await uncheckCourseCheckbox(cartIdText);
       } catch (error) {
@@ -1039,9 +1067,10 @@ function createVsbBrowserSource(db, config, dependencies = {}) {
   async function searchSelectAndRefresh(cartId) {
     await searchAndSelectCourse(cartId, { applyUncheck: true });
 
-    await page.waitForTimeout(1000);
+    await page.waitForTimeout(Math.max(1000, Number(config.vsbActionDelayMs) || 0));
     logInfo(`[vsb] Reloading page to capture JSP response...`);
     await page.reload({ waitUntil: "load" });
+    await waitActionDelay();
   }
 
   async function refreshOnlyForCapture(cartId) {
@@ -1052,6 +1081,7 @@ function createVsbBrowserSource(db, config, dependencies = {}) {
       logInfo("[vsb] Refreshing page for JSP capture...");
     }
     await page.reload({ waitUntil: "load" });
+    await waitActionDelay();
   }
 
   async function isCoursePresentInWindow(cartId) {

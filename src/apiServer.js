@@ -310,7 +310,8 @@ function createApiApp({
   db,
   notifierModule = defaultNotifier,
   env = process.env,
-  logger = apiLogger
+  logger = apiLogger,
+  rootDir = path.join(__dirname, "..")
 } = {}) {
   if (!db) {
     throw new Error("createApiApp requires a db instance.");
@@ -1055,10 +1056,10 @@ function createApiApp({
   );
 
   app.get("/", (_req, res) => {
-    res.sendFile(path.join(process.cwd(), "index.html"));
+    res.sendFile(path.join(rootDir, "index.html"));
   });
 
-  app.use("/src", express.static(path.join(process.cwd(), "src"), { index: false }));
+  app.use("/src", express.static(path.join(rootDir, "src"), { index: false }));
 
   app.use((err, _req, res, _next) => {
     logger.error("request failed", {

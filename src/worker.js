@@ -27,6 +27,41 @@ function sleep(ms) {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
+function isTransientWorkerError(error) {
+  if (!error) {
+    return false;
+  }
+  const code = String(error.code || "").trim().toUpperCase();
+  return [
+    "ENOTFOUND",
+    "EAI_AGAIN",
+    "ECONNRESET",
+    "ECONNREFUSED",
+    "ETIMEDOUT",
+    "EHOSTUNREACH",
+    "ENETUNREACH",
+    "EPIPE"
+  ].includes(code);
+}
+
+function getWorkerRecoveryDelayMs(attemptNumber) {
+  const attempt = Math.max(1, Number(attemptNumber) || 1);
+  const baseDelayMs = 5000;
+  const maxDelayMs = 60000;
+  const computed = baseDelayMs * Math.pow(2, Math.min(attempt - 1, 4));
+  return Math.min(computed, maxDelayMs);
+}
+
+function getLoopSleepDelayMs(config) {
+  const baseDelayMs = Math.max(1, Number(config.monitorIntervalSeconds) || 1) * 1000;
+  const jitterSeconds = Math.max(0, Number(config.monitorLoopJitterSeconds) || 0);
+  if (jitterSeconds <= 0) {
+    return baseDelayMs;
+  }
+  const jitterMs = Math.floor(Math.random() * ((jitterSeconds * 1000) + 1));
+  return baseDelayMs + jitterMs;
+}
+
 function toErrorPayload(error) {
   if (!error) {
     return null;
@@ -192,6 +227,7 @@ async function run() {
   const config = loadConfig();
   let db = null;
   let vsbSource = null;
+  let transientRecoveryAttempt = 0;
   const initLoginBehaviorNote = getInitLoginBehaviorNote(args);
 
   if (initLoginBehaviorNote) {
@@ -270,125 +306,173 @@ async function run() {
   });
 
   try {
-    db = createDb({ databaseUrl: config.databaseUrl });
-    await db.ensureCompatibility();
-    vsbSource = createVsbSource(db, config);
-
-    if (args.initLogin) {
-      const result = await vsbSource.initLoginSession();
-      workerLogger.info("init-login completed", {
-        event: "worker.init_login.completed",
-        mode,
-        result
-      });
-      await safeWriteWorkerHealth({
-        state: "running",
-        mode,
-        startedAt,
-        lastInitLoginResult: result,
-        metrics: metrics.snapshot()
-      });
-      if (args.keepOpen) {
-        workerLogger.info("waiting for termination signal while keeping browser open", {
-          event: "worker.init_login.keep_open_wait"
-        });
-        await waitForTerminationSignal();
-      }
-      await safeWriteWorkerHealth({
-        state: "idle",
-        mode,
-        startedAt,
-        metrics: metrics.snapshot()
-      });
-      return;
-    }
-
-    if (args.checkNewCourse) {
-      const result = await runImmediateCheckForNewCourse({
-        db,
-        vsbSource,
-        notifier,
-        ownerAlertEmail: config.ownerAlertEmail,
-        notificationPolicy,
-        userId: args.checkNewCourse.userId,
-        cartId: args.checkNewCourse.cartId
-      });
-      metrics.increment(
-        "worker_immediate_checks_total",
-        1,
-        "Total worker immediate check executions."
-      );
-      workerLogger.info("immediate check completed", {
-        event: "worker.immediate_check.completed",
-        mode,
-        userId: args.checkNewCourse.userId,
-        cartId: args.checkNewCourse.cartId,
-        result
-      });
-      await safeWriteWorkerHealth({
-        state: "idle",
-        mode,
-        startedAt,
-        lastImmediateCheckResult: result,
-        metrics: metrics.snapshot()
-      });
-      return;
-    }
-
-    if (args.once) {
-      const runStartedAtMs = Date.now();
-      const summary = await monitorOnce({
-        db,
-        vsbSource,
-        notifier,
-        ownerAlertEmail: config.ownerAlertEmail,
-        notificationPolicy
-      });
-      const durationMs = Date.now() - runStartedAtMs;
-      workerLogger.info("single monitor pass completed", {
-        event: "worker.once.completed",
-        mode,
-        durationMs,
-        summary
-      });
-      await safeWriteWorkerHealth({
-        state: "idle",
-        mode,
-        startedAt,
-        lastMonitorRunAt: new Date().toISOString(),
-        lastMonitorDurationMs: durationMs,
-        lastMonitorSummary: summary,
-        metrics: metrics.snapshot()
-      });
-      return;
-    }
-
     while (true) {
-      const runStartedAtMs = Date.now();
-      const summary = await monitorOnce({
-        db,
-        vsbSource,
-        notifier,
-        ownerAlertEmail: config.ownerAlertEmail,
-        notificationPolicy
-      });
-      const durationMs = Date.now() - runStartedAtMs;
-      workerLogger.info("monitor loop pass completed", {
-        event: "worker.loop.summary",
-        mode,
-        durationMs,
-        summary
-      });
-      await safeWriteWorkerHealth({
-        state: "running",
-        mode,
-        startedAt,
-        lastMonitorRunAt: new Date().toISOString(),
-        lastMonitorDurationMs: durationMs,
-        lastMonitorSummary: summary,
-        metrics: metrics.snapshot()
-      });
-      await sleep(config.monitorIntervalSeconds * 1000);
+      try {
+        if (!db) {
+          db = createDb({ databaseUrl: config.databaseUrl });
+          await db.ensureCompatibility();
+        }
+        if (!vsbSource) {
+          vsbSource = createVsbSource(db, config);
+        }
+
+        if (args.initLogin) {
+          const result = await vsbSource.initLoginSession();
+          workerLogger.info("init-login completed", {
+            event: "worker.init_login.completed",
+            mode,
+            result
+          });
+          await safeWriteWorkerHealth({
+            state: "running",
+            mode,
+            startedAt,
+            lastInitLoginResult: result,
+            metrics: metrics.snapshot()
+          });
+          if (args.keepOpen) {
+            workerLogger.info("waiting for termination signal while keeping browser open", {
+              event: "worker.init_login.keep_open_wait"
+            });
+            await waitForTerminationSignal();
+          }
+          await safeWriteWorkerHealth({
+            state: "idle",
+            mode,
+            startedAt,
+            metrics: metrics.snapshot()
+          });
+          return;
+        }
+
+        if (args.checkNewCourse) {
+          const result = await runImmediateCheckForNewCourse({
+            db,
+            vsbSource,
+            notifier,
+            ownerAlertEmail: config.ownerAlertEmail,
+            notificationPolicy,
+            userId: args.checkNewCourse.userId,
+            cartId: args.checkNewCourse.cartId
+          });
+          metrics.increment(
+            "worker_immediate_checks_total",
+            1,
+            "Total worker immediate check executions."
+          );
+          workerLogger.info("immediate check completed", {
+            event: "worker.immediate_check.completed",
+            mode,
+            userId: args.checkNewCourse.userId,
+            cartId: args.checkNewCourse.cartId,
+            result
+          });
+          await safeWriteWorkerHealth({
+            state: "idle",
+            mode,
+            startedAt,
+            lastImmediateCheckResult: result,
+            metrics: metrics.snapshot()
+          });
+          return;
+        }
+
+        if (args.once) {
+          const runStartedAtMs = Date.now();
+          const summary = await monitorOnce({
+            db,
+            vsbSource,
+            notifier,
+            ownerAlertEmail: config.ownerAlertEmail,
+            notificationPolicy,
+            pacing: {
+              scanDelayMs: config.monitorScanDelayMs
+            }
+          });
+          const durationMs = Date.now() - runStartedAtMs;
+          workerLogger.info("single monitor pass completed", {
+            event: "worker.once.completed",
+            mode,
+            durationMs,
+            summary
+          });
+          await safeWriteWorkerHealth({
+            state: "idle",
+            mode,
+            startedAt,
+            lastMonitorRunAt: new Date().toISOString(),
+            lastMonitorDurationMs: durationMs,
+            lastMonitorSummary: summary,
+            metrics: metrics.snapshot()
+          });
+          return;
+        }
+
+        const runStartedAtMs = Date.now();
+        const summary = await monitorOnce({
+          db,
+          vsbSource,
+          notifier,
+          ownerAlertEmail: config.ownerAlertEmail,
+          notificationPolicy,
+          pacing: {
+            scanDelayMs: config.monitorScanDelayMs
+          }
+        });
+        transientRecoveryAttempt = 0;
+        const durationMs = Date.now() - runStartedAtMs;
+        const nextLoopDelayMs = getLoopSleepDelayMs(config);
+        workerLogger.info("monitor loop pass completed", {
+          event: "worker.loop.summary",
+          mode,
+          durationMs,
+          summary,
+          nextLoopDelayMs
+        });
+        await safeWriteWorkerHealth({
+          state: "running",
+          mode,
+          startedAt,
+          lastMonitorRunAt: new Date().toISOString(),
+          lastMonitorDurationMs: durationMs,
+          lastMonitorSummary: summary,
+          nextLoopDelayMs,
+          metrics: metrics.snapshot()
+        });
+        await sleep(nextLoopDelayMs);
+      } catch (error) {
+        if (!(mode === "loop" && isTransientWorkerError(error))) {
+          throw error;
+        }
+
+        transientRecoveryAttempt += 1;
+        const recoveryDelayMs = getWorkerRecoveryDelayMs(transientRecoveryAttempt);
+        workerLogger.warn("transient worker dependency failure; retrying loop", {
+          event: "worker.loop.transient_dependency_failure",
+          attempt: transientRecoveryAttempt,
+          recoveryDelayMs,
+          error
+        });
+        await safeWriteWorkerHealth({
+          state: "degraded",
+          mode,
+          startedAt,
+          lastError: toErrorPayload(error),
+          nextRecoveryAttemptAt: new Date(Date.now() + recoveryDelayMs).toISOString(),
+          metrics: metrics.snapshot()
+        });
+
+        if (vsbSource && typeof vsbSource.close === "function") {
+          await vsbSource.close();
+        }
+        if (db && typeof db.close === "function") {
+          await db.close();
+        }
+        vsbSource = null;
+        db = null;
+
+        await sleep(recoveryDelayMs);
+      }
     }
   } finally {
     if (vsbSource && typeof vsbSource.close === "function") {
@@ -431,6 +515,7 @@ if (require.main === module) {
 }
 
 module.exports = {
+  getLoopSleepDelayMs,
   getInitLoginBehaviorNote,
   parseCliArgs,
   resolveRunMode,

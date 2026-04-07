@@ -166,6 +166,8 @@ function validateRuntimeConfig({ env = process.env, runtime, mode } = {}) {
 
   validateIntEnv("MONITOR_INTERVAL_SECONDS", env, { min: 1 }, errors);
   validateIntEnv("MIN_POLL_INTERVAL_SECONDS", env, { min: 1 }, errors);
+  validateIntEnv("MONITOR_LOOP_JITTER_SECONDS", env, { min: 0 }, errors);
+  validateIntEnv("MONITOR_SCAN_DELAY_MS", env, { min: 0 }, errors);
   validateBooleanEnv("MONITOR_EMERGENCY_DISABLE", env, errors);
   validateIntEnv("SESSION_DURATION_MINUTES", env, { min: 1 }, errors);
   validateIntEnv("VSB_REFRESH_INTERVAL_MINUTES", env, { min: 1 }, errors);
@@ -174,10 +176,12 @@ function validateRuntimeConfig({ env = process.env, runtime, mode } = {}) {
   validateIntEnv("VSB_SYNC_MAX_ADD_ATTEMPTS_PER_CYCLE", env, { min: 1 }, errors);
   validateIntEnv("VSB_SYNC_ADD_FAILURE_COOLDOWN_SECONDS", env, { min: 0 }, errors);
   validateIntEnv("VSB_POST_LOGIN_WAIT_MS", env, { min: 0 }, errors);
+  validateIntEnv("VSB_ACTION_DELAY_MS", env, { min: 0 }, errors);
   validateIntEnv("VSB_SEARCH_TIMEOUT_MS", env, { min: 1 }, errors);
   validateIntEnv("VSB_DROPDOWN_TIMEOUT_MS", env, { min: 1 }, errors);
   validateIntEnv("VSB_CAPTURE_WAIT_MS", env, { min: 0 }, errors);
   validateIntEnv("VSB_LOGIN_WAIT_SECONDS", env, { min: 1 }, errors);
+  validateIntEnv("VSB_RELOGIN_COOLDOWN_SECONDS", env, { min: 0 }, errors);
   validateIntEnv("NOTIFICATION_RETRY_BASE_SECONDS", env, { min: 1 }, errors);
   validateIntEnv("NOTIFICATION_RETRY_MAX_SECONDS", env, { min: 1 }, errors);
   validateIntEnv("NOTIFICATION_MAX_ATTEMPTS", env, { min: 1 }, errors);
@@ -436,6 +440,16 @@ function loadConfig(sourceEnv = process.env) {
     requestedMonitorIntervalSeconds: monitorCadence.requestedMonitorIntervalSeconds,
     minPollIntervalSeconds: monitorCadence.minPollIntervalSeconds,
     monitorIntervalWasClamped: monitorCadence.monitorIntervalWasClamped,
+    monitorLoopJitterSeconds: parseIntEnvMin(
+      sourceEnv.MONITOR_LOOP_JITTER_SECONDS,
+      15,
+      0
+    ),
+    monitorScanDelayMs: parseIntEnvMin(
+      sourceEnv.MONITOR_SCAN_DELAY_MS,
+      1200,
+      0
+    ),
     monitorEmergencyDisable: parseBoolEnv(
       sourceEnv.MONITOR_EMERGENCY_DISABLE,
       false
@@ -507,10 +521,16 @@ function loadConfig(sourceEnv = process.env) {
       sourceEnv.VSB_LOGIN_CONTINUE_SELECTOR ||
       "a[href*='schedulebuilder.yorku.ca'], a:has-text('Visual Schedule Builder'), a:has-text('continue to Visual Schedule Builder')",
     vsbPostLoginWaitMs: parseIntEnv(sourceEnv.VSB_POST_LOGIN_WAIT_MS, 1500),
+    vsbActionDelayMs: parseIntEnvMin(sourceEnv.VSB_ACTION_DELAY_MS, 1200, 0),
     vsbSearchTimeoutMs: parseIntEnv(sourceEnv.VSB_SEARCH_TIMEOUT_MS, 15000),
     vsbDropdownTimeoutMs: parseIntEnv(sourceEnv.VSB_DROPDOWN_TIMEOUT_MS, 10000),
     vsbCaptureWaitMs: parseIntEnv(sourceEnv.VSB_CAPTURE_WAIT_MS, 2000),
     vsbLoginWaitSeconds: parseIntEnv(sourceEnv.VSB_LOGIN_WAIT_SECONDS, 600),
+    vsbReloginCooldownSeconds: parseIntEnvMin(
+      sourceEnv.VSB_RELOGIN_COOLDOWN_SECONDS,
+      300,
+      0
+    ),
     vsbRefreshIntervalMinutes: parseIntEnv(
       sourceEnv.VSB_REFRESH_INTERVAL_MINUTES,
       30

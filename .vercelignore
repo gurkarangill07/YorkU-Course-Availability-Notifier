@@ -1,0 +1,7 @@
+.data
+.tmp
+logs
+node_modules
+worker.out.log
+worker.err.log
+.env.local

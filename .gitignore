@@ -27,10 +27,13 @@ env/
 
 # Logs
 *.log
+logs/
 
 # Node
 node_modules/
 npm-debug.log*
 .data/
+.tmp/
 playwright-report/
 test-results/
+.vercel

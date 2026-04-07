@@ -860,7 +860,8 @@ async function monitorOnce({
   vsbSource,
   notifier,
   ownerAlertEmail,
-  notificationPolicy
+  notificationPolicy,
+  pacing = {}
 }) {
   const runStartedAtMs = Date.now();
   metrics.increment(
@@ -888,6 +889,7 @@ async function monitorOnce({
   const snapshotContext = {
     lastAppliedFullSnapshotKey: null
   };
+  const scanDelayMs = Math.max(0, Number(pacing.scanDelayMs) || 0);
 
   function applyDispatchSummary(dispatchSummary) {
     summary.dispatchClaimed += dispatchSummary.claimed;
@@ -1133,6 +1135,10 @@ async function monitorOnce({
         cartId: target.cart_id,
         error
       });
+    } finally {
+      if (scanDelayMs > 0) {
+        await new Promise((resolve) => setTimeout(resolve, scanDelayMs));
+      }
     }
   }
 
