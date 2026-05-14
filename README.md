@@ -452,10 +452,18 @@ bash scripts/uninstall-monitor-launchd.sh
 
 ## Contributors
 
+### Gurkaran Gill (@gurkarangill07)
+- **System Architecture:** Architected the application and engineered the core Playwright-based Visual Schedule Builder (VSB) monitoring engine.
+- **Security & Persistence:** Designed the PostgreSQL schema, built the passwordless OTP authentication system, and hardened route-level rate limits across API instances.
+- **Notification Reliability:** Engineered the resilient notification queue, incorporating exponential retry backoffs, idempotency guards, and suppression windows.
+- **Operations & Observability:** Implemented automated worker health checks, watchdog recovery scripts, and Prometheus-style metric tracking.
+- **Frontend & Workflows:** Developed the Express API + single-page web UI, and established the foundational test gates and GitHub CI actions.
+
 ### Aqeelah (@Kot-ux)
 - **Notification Delivery:** Designed and implemented the email notification system utilizing `nodemailer` to dispatch alerts via Gmail SMTP.
 - **System Reliability:** Built out the robust runtime configuration validation framework to prevent misconfigured deployments (API, worker, and init-login paths).
-- **CI/CD & Testing:** Stabilized the Continuous Integration pipeline by resolving Windows-specific path issues and ensuring cross-platform compatibility for syntax smoke checks.
+- **CI/CD & Testing:** Stabilized the Continuous Integration pipeline by ensuring cross-platform compatibility for syntax smoke checks.
+- **Cross-Platform Support:** Resolved critical Windows-specific environment path issues in the worker health test suite to guarantee reliable cross-platform execution.
 - **Documentation:** Authored critical operational guidelines, including the secrets management policy (`docs/SECRETS.md`) and deployment preflight checklists (`docs/DEPLOYMENT.md`).
 
 ### Fawad (@Fawad922)
@@ -463,10 +471,3 @@ bash scripts/uninstall-monitor-launchd.sh
 - **Infrastructure:** Extended deployment tooling by authoring the Dockerfile for Render web hosting and establishing scheduled GitHub Actions monitoring workflows.
 - **User Interface:** Refined the web dashboard's tracking flows, optimizing the live UI refresh logic, session logout handling, and track-again state recovery.
 - **State Management:** Implemented temporal tracking updates (`updated_at`) on user course records to better manage active versus stale monitoring data.
-
-### Gurkaran Gill (@gurkarangill07)
-- **Project Foundation:** Architected the application and engineered the core Playwright-based Visual Schedule Builder (VSB) monitoring engine.
-- **Security & Persistence:** Designed the PostgreSQL schema, built the passwordless OTP authentication system, and hardened route-level rate limits across API instances.
-- **Notification Reliability:** Engineered the resilient notification queue, incorporating exponential retry backoffs, idempotency guards, and suppression windows.
-- **Operations & Observability:** Implemented automated worker health checks, watchdog recovery scripts, and Prometheus-style metric tracking.
-- **Frontend & Workflows:** Developed the Express API + single-page web UI, and established the foundational test gates and GitHub CI actions.
