@@ -454,13 +454,11 @@ bash scripts/uninstall-monitor-launchd.sh
 
 ### Gurkaran Gill (@gurkarangill07)
 - **System Architecture:** Scaffolded the project, engineered the core Playwright-based VSB monitoring engine, and connected the API to the UI.
-- **Data & Persistence:** Designed the initial PostgreSQL database schema and implemented session-bound course access.
-- **Authentication System:** Built passwordless OTP authentication, implemented session persistence, and hardened route-level rate limits across API instances.
+- **Data & Authentication:** Designed the PostgreSQL schema, built passwordless OTP authentication with session persistence, and hardened API rate limits.
 - **Notification Engine:** Built the resilient notification queue featuring exponential retry backoffs, idempotency guards, and suppression windows.
-- **Operations & Hardening:** Developed watchdog recovery scripts, automated worker health checks, Prometheus-style metrics, and launchd management scripts.
+- **Operations & Compliance:** Developed watchdog recovery scripts, automated health checks, Prometheus-style metrics, launchd scripts, and integrated compliance policy controls.
 - **Browser Resilience:** Engineered automatic recovery workflows for unexpected Playwright browser context closures and improved VSB sync reliability.
 - **UX Improvements:** Implemented pause/resume tracking controls, notification attempt reporting, per-user tracked course caps, and auth recovery UX.
-- **Compliance:** Integrated policy controls including minimum monitor cadence guardrails and emergency kill switches.
 - **Testing & CI/CD:** Established foundational automated test gates, deterministic browser-path test coverage, and configured the GitHub Actions CI workflow.
 - **Deployment:** Finalized Vercel web application deployment setup and supervised local worker integrations.
 
