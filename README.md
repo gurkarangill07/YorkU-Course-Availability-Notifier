@@ -449,3 +449,9 @@ bash scripts/uninstall-monitor-launchd.sh
 ## Runbooks
 
 - Incident runbooks and alert conditions live in `docs/RUNBOOK.md`.
+
+## Contributors
+
+- **Gurkaran Gill (@gurkarangill07)**: Project architecture, core monitoring engine, authentication system, operations hardening, UI, and CI/CD.
+- **Aqeel (@aqeela)**: Email notifications (Nodemailer), runtime configuration validation, secrets policy, and cross-platform CI fixes.
+- **Fawad (@Fawad922)**: Invalid course code handling/validation, deployment infrastructure (Render & GitHub Actions), and UI tracking flow updates.
