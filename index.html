@@ -1179,10 +1179,14 @@
                                </div>`
                     : `<button class="stop-btn" onclick="stopTracking(${course.id})">Stop Tracking</button>`;
 
+                const otherTrackingText = course.otherTrackingCount > 0
+                    ? ` • 🔥 ${course.otherTrackingCount} other person${course.otherTrackingCount > 1 ? 's' : ''} tracking this`
+                    : '';
+
                 li.innerHTML = `
                     <div class="course-info">
                         <strong>${escapeHtml(course.courseName || course.cartId)}</strong>
-                        <span>${escapeHtml(stateLabel)}</span>
+                        <span>${escapeHtml(stateLabel)}${otherTrackingText}</span>
                     </div>
                     ${actionsHtml}
                 `;

@@ -273,7 +273,8 @@ function mapTrackedCourseRow(row) {
       : 0,
     invalidNotifiedAt: row.invalid_notified_at || null,
     requiresFreshScan: Boolean(row.requires_fresh_scan),
-    createdAt: row.created_at
+    createdAt: row.created_at,
+    otherTrackingCount: Number.parseInt(row.other_tracking_count || 0, 10)
   };
 }
 

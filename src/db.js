@@ -755,7 +755,13 @@ function createDb({ databaseUrl }) {
         uc.last_observed_os,
         uc.requires_fresh_scan,
         c.course_name,
-        c.os
+        c.os,
+        (
+          SELECT COUNT(DISTINCT uc_other.user_id)
+          FROM user_courses uc_other
+          WHERE uc_other.cart_id = uc.cart_id
+            AND uc_other.user_id != uc.user_id
+        )::int AS other_tracking_count
       FROM user_courses uc
       INNER JOIN users u ON u.id = uc.user_id
       LEFT JOIN courses c ON c.cart_id = uc.cart_id
@@ -784,7 +790,13 @@ function createDb({ databaseUrl }) {
         uc.requires_fresh_scan,
         uc.created_at,
         c.course_name,
-        c.os
+        c.os,
+        (
+          SELECT COUNT(DISTINCT uc_other.user_id)
+          FROM user_courses uc_other
+          WHERE uc_other.cart_id = uc.cart_id
+            AND uc_other.user_id != uc.user_id
+        )::int AS other_tracking_count
       FROM user_courses uc
       LEFT JOIN courses c ON c.cart_id = uc.cart_id
       WHERE uc.user_id = $1
