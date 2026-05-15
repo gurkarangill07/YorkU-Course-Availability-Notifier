@@ -449,3 +449,30 @@ bash scripts/uninstall-monitor-launchd.sh
 ## Runbooks
 
 - Incident runbooks and alert conditions live in `docs/RUNBOOK.md`.
+
+## Contributors
+
+### Gurkaran Gill (@gurkarangill07)
+- **System Architecture:** Scaffolded the project, engineered the core Playwright-based VSB monitoring engine, and connected the API to the UI.
+- **Data & Authentication:** Designed the PostgreSQL schema, built passwordless OTP authentication with session persistence, and hardened API rate limits.
+- **Notification Engine:** Built the resilient notification queue featuring exponential retry backoffs, idempotency guards, and suppression windows.
+- **Operations & Compliance:** Developed watchdog recovery scripts, automated health checks, Prometheus-style metrics, launchd scripts, and integrated compliance policy controls.
+- **Browser Resilience:** Engineered automatic recovery workflows for unexpected Playwright browser context closures and improved VSB sync reliability.
+- **UX Improvements:** Implemented pause/resume tracking controls, notification attempt reporting, per-user tracked course caps, and auth recovery UX.
+- **Testing & CI/CD:** Established foundational automated test gates, deterministic browser-path test coverage, and configured the GitHub Actions CI workflow.
+- **Deployment:** Finalized Vercel web application deployment setup and supervised local worker integrations.
+
+### Fawad (@Fawad922)
+- **Data Validation:** Developed the invalid course code detection system, supporting alphanumeric validation and dynamically purging bad inputs after consecutive failures.
+- **Deployment Infrastructure:** Extended deployment tooling by authoring the Dockerfile for Render web hosting and establishing a scheduled GitHub Actions monitoring workflow.
+- **UI Refinements:** Enhanced the web dashboard tracking flows, optimizing the live UI refresh logic, session logout handling, and track-again state recovery.
+- **Notification Logic:** Refined the system to handle invalid-course email dispatches to alert users when a tracked course is consistently invalid.
+- **State Management:** Implemented temporal tracking updates (`updated_at`) on user course records to manage active vs. stale monitoring data.
+- **Env Cleanup:** Cleaned up deployment configuration files and refreshed the environment variable template for simpler onboarding.
+
+### Aqeelah (@Kot-ux)
+- **Notification Delivery:** Engineered the email notification system utilizing `nodemailer` to dispatch alerts via Gmail SMTP.
+- **Config Validation:** Designed and built the comprehensive runtime configuration validation framework (including API, worker, and init-login paths) alongside rigorous tests.
+- **CI Stabilization:** Stabilized the CI pipeline by ensuring cross-platform compatibility for syntax smoke checks.
+- **Cross-Platform Support:** Resolved critical Windows-specific environment path issues in the worker health test suite to guarantee reliable cross-platform execution.
+- **Operations Documentation:** Authored the critical secrets management policy (`docs/SECRETS.md`) and deployment preflight checklists (`docs/DEPLOYMENT.md`).
