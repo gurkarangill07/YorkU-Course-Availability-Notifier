@@ -462,13 +462,6 @@ bash scripts/uninstall-monitor-launchd.sh
 - **Testing & CI/CD:** Established foundational automated test gates, deterministic browser-path test coverage, and configured the GitHub Actions CI workflow.
 - **Deployment:** Finalized Vercel web application deployment setup and supervised local worker integrations.
 
-### Aqeelah (@Kot-ux)
-- **Notification Delivery:** Engineered the email notification system utilizing `nodemailer` to dispatch alerts via Gmail SMTP.
-- **Config Validation:** Designed and built the comprehensive runtime configuration validation framework (including API, worker, and init-login paths) alongside rigorous tests.
-- **CI Stabilization:** Stabilized the CI pipeline by ensuring cross-platform compatibility for syntax smoke checks.
-- **Cross-Platform Support:** Resolved critical Windows-specific environment path issues in the worker health test suite to guarantee reliable cross-platform execution.
-- **Operations Documentation:** Authored the critical secrets management policy (`docs/SECRETS.md`) and deployment preflight checklists (`docs/DEPLOYMENT.md`).
-
 ### Fawad (@Fawad922)
 - **Data Validation:** Developed the invalid course code detection system, supporting alphanumeric validation and dynamically purging bad inputs after consecutive failures.
 - **Deployment Infrastructure:** Extended deployment tooling by authoring the Dockerfile for Render web hosting and establishing a scheduled GitHub Actions monitoring workflow.
@@ -476,3 +469,10 @@ bash scripts/uninstall-monitor-launchd.sh
 - **Notification Logic:** Refined the system to handle invalid-course email dispatches to alert users when a tracked course is consistently invalid.
 - **State Management:** Implemented temporal tracking updates (`updated_at`) on user course records to manage active vs. stale monitoring data.
 - **Env Cleanup:** Cleaned up deployment configuration files and refreshed the environment variable template for simpler onboarding.
+
+### Aqeelah (@Kot-ux)
+- **Notification Delivery:** Engineered the email notification system utilizing `nodemailer` to dispatch alerts via Gmail SMTP.
+- **Config Validation:** Designed and built the comprehensive runtime configuration validation framework (including API, worker, and init-login paths) alongside rigorous tests.
+- **CI Stabilization:** Stabilized the CI pipeline by ensuring cross-platform compatibility for syntax smoke checks.
+- **Cross-Platform Support:** Resolved critical Windows-specific environment path issues in the worker health test suite to guarantee reliable cross-platform execution.
+- **Operations Documentation:** Authored the critical secrets management policy (`docs/SECRETS.md`) and deployment preflight checklists (`docs/DEPLOYMENT.md`).
